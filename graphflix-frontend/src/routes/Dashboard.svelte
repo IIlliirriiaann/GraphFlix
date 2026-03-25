@@ -7,7 +7,7 @@
 	let recommendations = [];
 	let stats = null;
 	let loading = true;
-	const userId = 1; // Hardcoded for now
+	const userId = 1; // Hardcoded for now TODO: Replace with actual user ID from auth context
 
 	onMount(async () => {
 		try {

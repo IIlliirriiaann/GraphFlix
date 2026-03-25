@@ -1,13 +1,19 @@
 <script>
 	import { onMount } from "svelte";
 	import { pop } from "svelte-spa-router";
-	import { getMovieDetails, getSimilarMovies } from "../lib/api";
+	import {
+		getMovieDetails,
+		getMoviePosterUrl,
+		getSimilarMovies,
+	} from "../lib/api";
 
 	export let params = {};
 
 	let movie = null;
 	let similar = [];
 	let loading = true;
+	let moviePosterUrl = null;
+	let similarPosterUrls = {};
 
 	onMount(async () => {
 		const movieId = parseInt(params.id);
@@ -20,6 +26,20 @@
 
 			movie = movieRes.data;
 			similar = similarRes.data.similar;
+
+			moviePosterUrl = await getMoviePosterUrl(movie.tmdbId);
+
+			const posters = await Promise.all(
+				similar.map(async (similarMovie) => ({
+					movieId: similarMovie.movieId,
+					posterUrl: await getMoviePosterUrl(similarMovie.tmdbId),
+				}))
+			);
+
+			similarPosterUrls = posters.reduce((acc, item) => {
+				acc[item.movieId] = item.posterUrl;
+				return acc;
+			}, {});
 		} catch (error) {
 			console.error("Error loading movie:", error);
 		} finally {
@@ -43,6 +63,19 @@
 			<!-- Movie Header -->
 			<div class="grid md:grid-cols-[300px_1fr] gap-8 mb-12">
 				<div class="aspect-[2/3] bg-gradient-to-br from-bg-tertiary to-bg-secondary rounded-lg relative overflow-hidden">
+					{#if moviePosterUrl}
+						<img
+							src={moviePosterUrl}
+							alt={`Poster of ${movie.title}`}
+							class="absolute inset-0 w-full h-full object-cover"
+						/>
+					{:else}
+						<div
+							class="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm uppercase tracking-wide"
+						>
+							No poster
+						</div>
+					{/if}
 				</div>
 
 				<div class="flex flex-col justify-center">
@@ -85,7 +118,20 @@
 					<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
 						{#each similar as similarMovie}
 							<div class="text-center">
-								<div class="aspect-[2/3] bg-bg-tertiary rounded-lg mb-2"></div>
+								<div class="aspect-[2/3] bg-bg-tertiary rounded-lg mb-2 relative overflow-hidden">
+									{#if similarPosterUrls[similarMovie.movieId]}
+										<img
+											src={similarPosterUrls[similarMovie.movieId]}
+											alt={`Poster of ${similarMovie.title}`}
+											class="absolute inset-0 w-full h-full object-cover"
+											loading="lazy"
+										/>
+									{:else}
+										<div class="absolute inset-0 flex items-center justify-center text-[10px] text-text-tertiary uppercase tracking-wide">
+											No poster
+										</div>
+									{/if}
+								</div>
 								<p class="text-sm font-medium truncate">{similarMovie.title}</p>
 								<p class="text-xs text-text-tertiary">
 									{similarMovie.genreCount} genres

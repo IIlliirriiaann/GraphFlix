@@ -1,6 +1,15 @@
 <script>
+	import { onMount } from "svelte";
+	import { getMoviePosterUrl } from "./api";
+
 	export let movie;
 	export let onClick = () => {};
+
+	let posterUrl = null;
+
+	onMount(async () => {
+		posterUrl = await getMoviePosterUrl(movie.tmdbId);
+	});
 </script>
 
 <button
@@ -10,11 +19,20 @@
 	<div
 		class="aspect-[2/3] bg-gradient-to-br from-bg-tertiary to-bg-secondary relative"
 	>
-		<div
-			class="absolute inset-0 flex items-center justify-center text-6xl opacity-20"
-		>
-			TODO: poster
-		</div>
+		{#if posterUrl}
+			<img
+				src={posterUrl}
+				alt={`Poster of ${movie.title}`}
+				class="absolute inset-0 w-full h-full object-cover"
+				loading="lazy"
+			/>
+		{:else}
+			<div
+				class="absolute inset-0 flex items-center justify-center text-6xl opacity-20"
+			>
+				🎬
+			</div>
+		{/if}
 	</div>
 
 	<div class="p-4">

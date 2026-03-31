@@ -82,3 +82,10 @@ class RecommendationService:
             {"userId": user_id}
         )
         return results[0] if results else None
+
+    async def get_users(self, limit: int = 100):
+        """List users for selection in the UI"""
+        return await self.db.execute_read(
+            utils.GET_USERS,
+            {"limit": limit}
+        )

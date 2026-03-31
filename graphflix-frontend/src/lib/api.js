@@ -3,7 +3,7 @@ import axios from "axios";
 const API_BASE = "http://localhost:8000/api/v1";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
-const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY; console.log("TMDB_API_KEY:", TMDB_API_KEY);
+const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const posterCache = new Map();
 
 const api = axios.create({
@@ -22,6 +22,9 @@ export const getSimilarMovies = (movieId, limit = 10) =>
 	api.get(`/movies/${movieId}/similar`, { params: { limit } });
 
 export const getUserStats = (userId) => api.get(`/users/${userId}/stats`);
+
+export const getUsers = (limit = 100) =>
+	api.get(`/users`, { params: { limit } });
 
 export const getTopMovies = (genre, limit = 10) =>
 	api.get(`/movies/top`, { params: { genre, limit } });

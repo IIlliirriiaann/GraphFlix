@@ -55,3 +55,10 @@ RETURN moviesRated,
        genres,
        SIZE(genres) AS numGenres
 """
+
+GET_USERS = """
+MATCH (u:User)
+RETURN u.userId AS userId
+ORDER BY u.userId
+LIMIT $limit
+"""

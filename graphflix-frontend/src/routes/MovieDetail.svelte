@@ -1,6 +1,5 @@
 <script>
-	import { onMount } from "svelte";
-	import { pop } from "svelte-spa-router";
+	import { pop, push } from "svelte-spa-router";
 	import {
 		getMovieDetails,
 		getMoviePosterUrl,
@@ -14,15 +13,24 @@
 	let loading = true;
 	let moviePosterUrl = null;
 	let similarPosterUrls = {};
+	let activeRequestId = 0;
 
-	onMount(async () => {
-		const movieId = parseInt(params.id);
+	const loadMovie = async (movieId) => {
+		const requestId = ++activeRequestId;
+
+		loading = true;
+		movie = null;
+		similar = [];
+		moviePosterUrl = null;
+		similarPosterUrls = {};
 
 		try {
 			const [movieRes, similarRes] = await Promise.all([
 				getMovieDetails(movieId),
 				getSimilarMovies(movieId, 6),
 			]);
+
+			if (requestId !== activeRequestId) return;
 
 			movie = movieRes.data;
 			similar = similarRes.data.similar;
@@ -36,16 +44,38 @@
 				}))
 			);
 
+			if (requestId !== activeRequestId) return;
+
 			similarPosterUrls = posters.reduce((acc, item) => {
 				acc[item.movieId] = item.posterUrl;
 				return acc;
 			}, {});
 		} catch (error) {
+			if (requestId !== activeRequestId) return;
 			console.error("Error loading movie:", error);
 		} finally {
-			loading = false;
+			if (requestId === activeRequestId) {
+				loading = false;
+			}
 		}
-	});
+	};
+
+	const handleSimilarMovieClick = (movieId) => {
+		push(`/movie/${movieId}`);
+	};
+
+	$: routeMovieId = Number.parseInt(params.id, 10);
+	$: {
+		if (Number.isInteger(routeMovieId) && routeMovieId > 0) {
+			loadMovie(routeMovieId);
+		} else {
+			loading = false;
+			movie = null;
+			similar = [];
+			moviePosterUrl = null;
+			similarPosterUrls = {};
+		}
+	}
 </script>
 
 <div class="min-h-screen p-8">
@@ -117,13 +147,17 @@
 
 					<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
 						{#each similar as similarMovie}
-							<div class="text-center">
+							<button
+								type="button"
+								on:click={() => handleSimilarMovieClick(similarMovie.movieId)}
+								class="text-center w-full group"
+							>
 								<div class="aspect-[2/3] bg-bg-tertiary rounded-lg mb-2 relative overflow-hidden">
 									{#if similarPosterUrls[similarMovie.movieId]}
 										<img
 											src={similarPosterUrls[similarMovie.movieId]}
 											alt={`Poster of ${similarMovie.title}`}
-											class="absolute inset-0 w-full h-full object-cover"
+											class="absolute inset-0 w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
 											loading="lazy"
 										/>
 									{:else}
@@ -132,11 +166,13 @@
 										</div>
 									{/if}
 								</div>
-								<p class="text-sm font-medium truncate">{similarMovie.title}</p>
+								<p class="text-sm font-medium truncate group-hover:text-accent-primary transition-colors">
+									{similarMovie.title}
+								</p>
 								<p class="text-xs text-text-tertiary">
 									{similarMovie.genreCount} genres
 								</p>
-							</div>
+							</button>
 						{/each}
 					</div>
 				</div>

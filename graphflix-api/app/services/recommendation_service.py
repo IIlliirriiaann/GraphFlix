@@ -50,6 +50,72 @@ class RecommendationService:
             {"userId": user_id, "limit": limit}
         )
         return await self._hydrate_movie_list(movies)
+
+    async def get_custom_recommendations(
+        self,
+        user_id: int,
+        weights: dict[str, float],
+        limit: int = 10
+    ):
+        """Weighted blend of collaborative and content-based recommendations."""
+        fetch_limit = max(limit * 3, limit)
+
+        collaborative_movies = await self.db.execute_read(
+            collaborative.GET_COLLABORATIVE_RECOMMENDATIONS,
+            {"userId": user_id, "limit": fetch_limit}
+        )
+        content_movies = await self.db.execute_read(
+            content_based.GET_USER_CONTENT_RECOMMENDATIONS,
+            {"userId": user_id, "limit": fetch_limit}
+        )
+
+        weighted_movies: dict[int, dict[str, Any]] = {}
+
+        def _accumulate(movies: list[dict[str, Any]], key: str, raw_score_key: str):
+            weight = float(weights.get(key, 0.0))
+            if weight <= 0:
+                return
+
+            max_raw_score = max((float(movie.get(raw_score_key, 0.0)) for movie in movies), default=0.0)
+            if max_raw_score <= 0:
+                return
+
+            for movie in movies:
+                movie_id = movie.get("movieId")
+                if movie_id is None:
+                    continue
+
+                raw_score = float(movie.get(raw_score_key, 0.0))
+                normalized_score = raw_score / max_raw_score
+                contribution = normalized_score * weight
+
+                existing = weighted_movies.setdefault(
+                    movie_id,
+                    {
+                        "movieId": movie_id,
+                        "title": movie.get("title"),
+                        "weightedScore": 0.0,
+                        "sourceScores": {},
+                    },
+                )
+                existing["weightedScore"] += contribution
+                existing["sourceScores"][key] = {
+                    "raw": raw_score,
+                    "normalized": normalized_score,
+                    "weight": weight,
+                    "contribution": contribution,
+                }
+
+        _accumulate(collaborative_movies, "rating", "score")
+        _accumulate(content_movies, "genre", "totalScore")
+
+        ranked = sorted(
+            weighted_movies.values(),
+            key=lambda movie: movie["weightedScore"],
+            reverse=True,
+        )[:limit]
+
+        return await self._hydrate_movie_list(ranked)
     
     async def get_similar_movies(self, movie_id: int, limit: int = 10):
         """Similar movies"""

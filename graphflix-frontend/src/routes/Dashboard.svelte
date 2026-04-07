@@ -1,7 +1,7 @@
 <script>
-	import { onMount } from "svelte";
+	import { onDestroy, onMount } from "svelte";
 	import { push } from "svelte-spa-router";
-	import { getRecommendations, getUserStats } from "../lib/api";
+	import { getCustomRecommendations, getUserStats } from "../lib/api";
 	import MovieCard from "../lib/MovieCard.svelte";
 
 	let recommendations = [];
@@ -10,9 +10,26 @@
 	let selectedUserId = null;
 	let userInput = "";
 	let errorMessage = "";
+	let recommendationLimit = 10;
+	let genreWeight = 0.6;
+	let ratingWeight = 0.4;
+	let selectedPreset = "balanced";
+	let autoReloadTimeout = null;
+
+	const WEIGHT_PRESETS = {
+		balanced: { genre: 0.5, rating: 0.5 },
+		genre_first: { genre: 0.7, rating: 0.3 },
+		rating_first: { genre: 0.3, rating: 0.7 },
+	};
 
 	onMount(() => {
 		// Page ready, waiting for user input
+	});
+
+	onDestroy(() => {
+		if (autoReloadTimeout) {
+			clearTimeout(autoReloadTimeout);
+		}
 	});
 
 	const handleMovieClick = (movieId) => {
@@ -24,25 +41,93 @@
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 	};
 
+	const parseLimit = (value) => {
+		const parsed = Number.parseInt(value, 10);
+		if (!Number.isInteger(parsed)) return 10;
+		return Math.min(50, Math.max(1, parsed));
+	};
+
+	const syncGenreWeight = (value) => {
+		const parsed = Number.parseFloat(value);
+		const clamped = Number.isFinite(parsed)
+			? Math.min(1, Math.max(0, parsed))
+			: 0.5;
+		genreWeight = Number(clamped.toFixed(2));
+		ratingWeight = Number((1 - clamped).toFixed(2));
+		selectedPreset = "custom";
+		triggerAutoReload();
+	};
+
+	const syncRatingWeight = (value) => {
+		const parsed = Number.parseFloat(value);
+		const clamped = Number.isFinite(parsed)
+			? Math.min(1, Math.max(0, parsed))
+			: 0.5;
+		ratingWeight = Number(clamped.toFixed(2));
+		genreWeight = Number((1 - clamped).toFixed(2));
+		selectedPreset = "custom";
+		triggerAutoReload();
+	};
+
+	const triggerAutoReload = () => {
+		if (!selectedUserId) return;
+
+		if (autoReloadTimeout) {
+			clearTimeout(autoReloadTimeout);
+		}
+
+		autoReloadTimeout = setTimeout(() => {
+			loadDashboardData(selectedUserId);
+		}, 500);
+	};
+
+	const handleLimitInput = (value) => {
+		recommendationLimit = value;
+		triggerAutoReload();
+	};
+
+	const applyPreset = (presetKey) => {
+		selectedPreset = presetKey;
+		const preset = WEIGHT_PRESETS[presetKey];
+		if (!preset) return;
+		genreWeight = preset.genre;
+		ratingWeight = preset.rating;
+		triggerAutoReload();
+	};
+
 	const loadDashboardData = async (userId) => {
+		if (autoReloadTimeout) {
+			clearTimeout(autoReloadTimeout);
+		}
+
 		loading = true;
 		errorMessage = "";
 		recommendations = [];
 		stats = null;
+		const parsedLimit = parseLimit(recommendationLimit);
+		recommendationLimit = parsedLimit;
 
 		try {
 			const [recRes, statsRes] = await Promise.all([
-				getRecommendations(userId),
+				getCustomRecommendations(
+					userId,
+					{
+						genre: genreWeight,
+						rating: ratingWeight,
+					},
+					parsedLimit,
+				),
 				getUserStats(userId),
 			]);
 
 			selectedUserId = userId;
-			userInput = String(userId);
 			recommendations = recRes.data.recommendations;
 			stats = statsRes.data.stats;
 		} catch (error) {
 			if (error?.response?.status === 404) {
 				errorMessage = `User ${userId} not found.`;
+			} else if (error?.response?.status === 400) {
+				errorMessage = "Please set recommendation weights greater than 0.";
 			} else {
 				errorMessage = "Unable to load recommendations right now.";
 			}
@@ -62,6 +147,9 @@
 			stats = null;
 			return;
 		}
+
+		userInput = String(parsedUserId);
+		selectedUserId = parsedUserId;
 
 		await loadDashboardData(parsedUserId);
 	};
@@ -99,10 +187,81 @@
 						type="submit"
 						class="bg-accent-primary text-white rounded-lg px-5 py-3 hover:opacity-90 transition-opacity"
 					>
-						Load user
+						Load picks
 					</button>
 				</div>
 			</form>
+
+			<div class="mt-6 bg-bg-secondary/70 border border-white/10 rounded-xl p-4 sm:p-5">
+				<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+					<div>
+						<label for="weight-preset" class="text-sm text-text-secondary block mb-2">
+							Weight preset
+						</label>
+						<select
+							id="weight-preset"
+							value={selectedPreset}
+							on:change={(event) => applyPreset(event.currentTarget.value)}
+							class="w-full bg-bg-primary border border-white/10 rounded-lg px-4 py-2.5 focus:outline-none focus:border-accent-primary"
+						>
+							<option value="balanced">Balanced (50/50)</option>
+							<option value="genre_first">Genre-first (70/30)</option>
+							<option value="rating_first">Rating-first (30/70)</option>
+							<option value="custom">Custom</option>
+						</select>
+					</div>
+
+					<div>
+						<label for="genre-weight" class="text-sm text-text-secondary block mb-2">
+							Genre weight: {(genreWeight * 100).toFixed(0)}%
+						</label>
+						<input
+							id="genre-weight"
+							type="range"
+							min="0"
+							max="1"
+							step="0.05"
+							value={genreWeight}
+							on:input={(event) => syncGenreWeight(event.currentTarget.value)}
+							class="w-full accent-accent-primary"
+						/>
+					</div>
+
+					<div>
+						<label for="rating-weight" class="text-sm text-text-secondary block mb-2">
+							Rating weight: {(ratingWeight * 100).toFixed(0)}%
+						</label>
+						<input
+							id="rating-weight"
+							type="range"
+							min="0"
+							max="1"
+							step="0.05"
+							value={ratingWeight}
+							on:input={(event) => syncRatingWeight(event.currentTarget.value)}
+							class="w-full accent-accent-secondary"
+						/>
+					</div>
+
+					<div>
+						<label for="recommendation-limit" class="text-sm text-text-secondary block mb-2">
+							Recommendation count
+						</label>
+						<input
+							id="recommendation-limit"
+							type="number"
+							min="1"
+							max="50"
+							value={recommendationLimit}
+							on:input={(event) => handleLimitInput(event.currentTarget.value)}
+							class="w-full bg-bg-primary border border-white/10 rounded-lg px-4 py-2.5 focus:outline-none focus:border-accent-primary"
+						/>
+					</div>
+				</div>
+				<p class="mt-3 text-xs text-text-secondary">
+					Weighted mode enabled: recommendations are blended from genre and rating signals.
+				</p>
+			</div>
 
 			{#if errorMessage}
 				<p class="mt-3 text-sm text-red-400">{errorMessage}</p>
@@ -132,6 +291,7 @@
 				</h2>
 				<button
 					class="text-accent-primary hover:underline text-sm"
+					disabled={!selectedUserId || loading}
 					on:click={() => loadDashboardData(selectedUserId)}
 				>
 					Refresh

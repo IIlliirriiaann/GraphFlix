@@ -13,22 +13,41 @@ const api = axios.create({
 	},
 });
 
+/** @param {number|string} userId @param {number} [limit=10] */
 export const getRecommendations = (userId, limit = 10) =>
 	api.get(`/recommendations/${userId}`, { params: { limit } });
 
+/** @param {number|string} userId @param {{ genre: number, rating: number }} weights @param {number} [limit=10] */
+export const getCustomRecommendations = (
+	userId,
+	weights,
+	limit = 10,
+) =>
+	api.post(`/recommendations/custom`, {
+		userId: String(userId),
+		weights,
+		limit,
+	});
+
+/** @param {number|string} movieId */
 export const getMovieDetails = (movieId) => api.get(`/movies/${movieId}`);
 
+/** @param {number|string} movieId @param {number} [limit=10] */
 export const getSimilarMovies = (movieId, limit = 10) =>
 	api.get(`/movies/${movieId}/similar`, { params: { limit } });
 
+/** @param {number|string} userId */
 export const getUserStats = (userId) => api.get(`/users/${userId}/stats`);
 
+/** @param {number} [limit=100] */
 export const getUsers = (limit = 100) =>
 	api.get(`/users`, { params: { limit } });
 
+/** @param {string} genre @param {number} [limit=10] */
 export const getTopMovies = (genre, limit = 10) =>
 	api.get(`/movies/top`, { params: { genre, limit } });
 
+/** @param {number|string|null|undefined} tmdbId */
 export const getMoviePosterUrl = async (tmdbId) => {
 	if (!tmdbId || !TMDB_API_KEY) return null;
 

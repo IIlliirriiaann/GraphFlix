@@ -36,7 +36,15 @@ class RecommendationService:
         ]
     
     async def get_collaborative_recommendations(self, user_id: int, limit: int = 10):
-        """Collaborative filtering recommendations"""
+        """Advanced collaborative filtering with Jaccard similarity and rating-aware prediction.
+        
+        Returns:
+        - movieId: numeric movie identifier
+        - title: movie title
+        - score: normalized [0,1] blending min-max and z-score normalization
+        - numSimilarUsers: count of users with similarity > 0.1 who rated this movie
+        - predictedRating: weighted average rating from similar users
+        """
         movies = await self.db.execute_read(
             collaborative.GET_COLLABORATIVE_RECOMMENDATIONS,
             {"userId": user_id, "limit": limit}
@@ -44,10 +52,100 @@ class RecommendationService:
         return await self._hydrate_movie_list(movies)
     
     async def get_content_recommendations(self, user_id: int, limit: int = 10):
-        """Content-based recommendations"""
+        """Content-based recommendations from user's preferred movies profile.
+        
+        Builds user profile from movies rated >= 4.0, then recommends movies
+        matching genres, actors, and directors with weighted Jaccard similarity.
+        
+        Returns:
+        - movieId: numeric movie identifier
+        - title: movie title
+        - totalScore: composite score [0,1] from genre (0.6) + actor (0.3) + director (0.1)
+        """
         movies = await self.db.execute_read(
             content_based.GET_USER_CONTENT_RECOMMENDATIONS,
             {"userId": user_id, "limit": limit}
+        )
+        return await self._hydrate_movie_list(movies)
+
+    async def get_hybrid_recommendations(
+        self,
+        user_id: int,
+        collaborative_weight: float = 0.6,
+        content_weight: float = 0.4,
+        limit: int = 10
+    ):
+        """Hybrid recommendations blending collaborative and content-based signals.
+        
+        Combines two scaled scores using configurable weights, with boosts for
+        popularity (+5%) and recency (+5%). Applies diversity filter to ensure
+        max 3 movies per genre in top-N results.
+        
+        Parameters:
+        - collaborative_weight: weight for collaborative score [0, 1]
+        - content_weight: weight for content score [0, 1]
+        - limit: max recommendations returned (before diversity filtering)
+        
+        Returns:
+        - movieId: numeric movie identifier
+        - title: movie title
+        - hybridScore: composite score [0,1]
+        - collaborativeScore: normalized collaborative component
+        - contentScore: normalized content component
+        - genres: list of associated genres
+        """
+        movies = await self.db.execute_read(
+            collaborative.GET_HYBRID_RECOMMENDATIONS,
+            {
+                "userId": user_id,
+                "limit": limit,
+                "collaborativeWeight": collaborative_weight,
+                "contentWeight": content_weight
+            }
+        )
+        return await self._hydrate_movie_list(movies)
+
+    async def get_configurable_weight_recommendations(
+        self,
+        user_id: int,
+        genre_weight: float = 0.25,
+        actor_weight: float = 0.15,
+        rating_weight: float = 0.45,
+        popularity_weight: float = 0.15,
+        limit: int = 10
+    ):
+        """Configurable composite scoring with detailed component breakdown.
+        
+        All weights must sum to 1.0. Combines four normalized components:
+        - genreScore: Jaccard similarity of genres
+        - actorScore: Jaccard similarity of actors
+        - ratingScore: collaborative predicted rating [0.5, 5.0] normalized to [0,1]
+        - popularityScore: quality-weighted popularity from avg rating and volume
+        
+        Parameters:
+        - genre_weight, actor_weight, rating_weight, popularity_weight: all [0, 1]
+        
+        Returns:
+        - movieId: numeric movie identifier
+        - title: movie title
+        - compositeScore: weighted combination [0,1]
+        - breakdown: dict with genreScore, actorScore, ratingScore, popularityScore, and weights used
+        """
+        # Validate weights sum to 1.0 (with small tolerance for float comparison)
+        weight_sum = genre_weight + actor_weight + rating_weight + popularity_weight
+        if not (0.99 <= weight_sum <= 1.01):
+            raise ValueError(f"Weights must sum to 1.0, got {weight_sum}")
+        
+        movies = await self.db.execute_read(
+            collaborative.GET_CONFIGURABLE_WEIGHT_RECOMMENDATIONS,
+            {
+                "userId": user_id,
+                "limit": limit,
+                "genreWeight": genre_weight,
+                "actorWeight": actor_weight,
+                "ratingWeight": rating_weight,
+                "popularityWeight": popularity_weight
+            }
         )
         return await self._hydrate_movie_list(movies)
 
@@ -57,7 +155,10 @@ class RecommendationService:
         weights: dict[str, float],
         limit: int = 10
     ):
-        """Weighted blend of collaborative and content-based recommendations."""
+        """Legacy wrapper for backward compatibility with custom weighted recommendations.
+        
+        Maps legacy 'genre' and 'rating' keys to new 4-component model.
+        """
         fetch_limit = max(limit * 3, limit)
 
         collaborative_movies = await self.db.execute_read(
@@ -118,7 +219,17 @@ class RecommendationService:
         return await self._hydrate_movie_list(ranked)
     
     async def get_similar_movies(self, movie_id: int, limit: int = 10):
-        """Similar movies"""
+        """Similar movies based on weighted genre, actor, and director Jaccard similarity.
+        
+        Weights: genres (0.6), actors (0.3), directors (0.1).
+        Returns normalized scores with explanation of matched content.
+        
+        Returns:
+        - movieId: numeric movie identifier
+        - title: movie title
+        - score: normalized [0,1]
+        - explanation: dict with matchedGenres, matchedActors, matchedDirectors, componentScores
+        """
         movies = await self.db.execute_read(
             content_based.GET_SIMILAR_MOVIES_BY_GENRE,
             {"movieId": movie_id, "limit": limit}

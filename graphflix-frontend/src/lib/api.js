@@ -17,6 +17,10 @@ const api = axios.create({
 export const getRecommendations = (userId, limit = 10) =>
 	api.get(`/recommendations/${userId}`, { params: { limit } });
 
+/** @param {number|string} userId @param {number} [limit=10] */
+export const getContentRecommendations = (userId, limit = 10) =>
+	api.get(`/recommendations/${userId}/content`, { params: { limit } });
+
 /** @param {number|string} userId @param {{ genre: number, rating: number }} weights @param {number} [limit=10] */
 export const getCustomRecommendations = (
 	userId,
@@ -26,6 +30,38 @@ export const getCustomRecommendations = (
 	api.post(`/recommendations/custom`, {
 		userId: String(userId),
 		weights,
+		limit,
+	});
+
+/** @param {number|string} userId @param {number} collaborativeWeight @param {number} contentWeight @param {number} [limit=10] */
+export const getHybridRecommendations = (
+	userId,
+	collaborativeWeight = 0.6,
+	contentWeight = 0.4,
+	limit = 10,
+) =>
+	api.post(`/recommendations/hybrid`, {
+		userId: String(userId),
+		collaborativeWeight,
+		contentWeight,
+		limit,
+	});
+
+/** @param {number|string} userId @param {number} genreWeight @param {number} actorWeight @param {number} ratingWeight @param {number} popularityWeight @param {number} [limit=10] */
+export const getConfigurableRecommendations = (
+	userId,
+	genreWeight = 0.25,
+	actorWeight = 0.15,
+	ratingWeight = 0.45,
+	popularityWeight = 0.15,
+	limit = 10,
+) =>
+	api.post(`/recommendations/custom`, {
+		userId: String(userId),
+		genreWeight,
+		actorWeight,
+		ratingWeight,
+		popularityWeight,
 		limit,
 	});
 

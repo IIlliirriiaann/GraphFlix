@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import neo4j_connection
-from app.routers import recommendations, movies, users
+from app.routers import recommendations, movies, users, graph
 
 settings = get_settings()
 
@@ -45,3 +45,4 @@ async def health_check():
 app.include_router(recommendations.router, prefix=settings.API_PREFIX, tags=["recommendations"])
 app.include_router(movies.router, prefix=settings.API_PREFIX, tags=["movies"])
 app.include_router(users.router, prefix=settings.API_PREFIX, tags=["users"])
+app.include_router(graph.router, prefix=settings.API_PREFIX, tags=["graph"])

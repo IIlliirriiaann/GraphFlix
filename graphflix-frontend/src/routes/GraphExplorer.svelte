@@ -2,13 +2,50 @@
 	import { onDestroy, onMount, tick } from "svelte";
 	import { push } from "svelte-spa-router";
 	import cytoscape from "cytoscape";
+	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
+	import cytoscapeCola from "cytoscape-cola";
+	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
+	import cytoscapeDagre from "cytoscape-dagre";
 	import { getUserGraph } from "../lib/api";
+
+	cytoscape.use(cytoscapeCola);
+	cytoscape.use(cytoscapeDagre);
 
 	const NODE_COLORS = {
 		Movie: "#6366f1",
 		User: "#ec4899",
 		Genre: "#22c55e",
 		Actor: "#f59e0b",
+	};
+
+	const LAYOUT_OPTIONS = [
+		{
+			value: "cola",
+			label: "Cola",
+			hint: "Force-directed with strong overlap avoidance and wider spacing.",
+		},
+		{
+			value: "dagre",
+			label: "Dagre",
+			hint: "Hierarchical seed plus force relaxation to avoid straight-line stacking.",
+		},
+		{
+			value: "concentric",
+			label: "Concentric",
+			hint: "Node rings by type, with users centered and metadata outside.",
+		},
+		{
+			value: "breadthfirst",
+			label: "Breadth-first",
+			hint: "Radial tree expansion from user roots.",
+		},
+	];
+
+	const TYPE_PRIORITY = {
+		User: 4,
+		Movie: 3,
+		Genre: 2,
+		Actor: 1,
 	};
 
 	let cy = null;
@@ -19,6 +56,7 @@
 	let userInput = "1";
 	let currentUserId = null;
 	let depth = 2;
+	let selectedLayout = "cola";
 
 	let selectedNode = null;
 	let graphStats = { nodeCount: 0, edgeCount: 0 };
@@ -36,6 +74,9 @@
 		type: "",
 		connections: 0,
 	};
+
+	$: selectedLayoutHint =
+		LAYOUT_OPTIONS.find((layout) => layout.value === selectedLayout)?.hint || "";
 
 	const parseUserId = (value) => {
 		const parsed = Number.parseInt(value, 10);
@@ -76,6 +117,7 @@
 	const mapGraphToElements = (graphData) => {
 		const rawNodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
 		const rawEdges = Array.isArray(graphData?.edges) ? graphData.edges : [];
+		const rootUserId = currentUserId ? String(currentUserId) : null;
 
 		const degreeById = {};
 		for (const edge of rawEdges) {
@@ -89,6 +131,10 @@
 			const id = String(node.id);
 			const type = getNodeType(node.type);
 			const degree = degreeById[id] || 0;
+			const isRootUser =
+				type === "User" &&
+				rootUserId &&
+				(String(node.properties?.userId) === rootUserId || id === rootUserId);
 			return {
 				group: "nodes",
 				data: {
@@ -98,7 +144,9 @@
 					properties: node.properties || {},
 					degree,
 					size: Math.min(68, 24 + degree * 4),
+					rootUser: isRootUser,
 				},
+				classes: isRootUser ? "root-user" : "",
 			};
 		});
 
@@ -159,7 +207,29 @@
 
 	const clearHighlight = () => {
 		if (!cy) return;
-		cy.elements().removeClass("faded focused selected");
+		cy.elements().removeClass("faded focused selected path-highlight");
+	};
+
+	const highlightRootPath = (node) => {
+		if (!cy) return;
+		const rootNode = cy.nodes(".root-user").first();
+		if (!rootNode.length) return;
+
+		if (node.id() === rootNode.id()) {
+			node.addClass("path-highlight");
+			return;
+		}
+
+		const dijkstra = cy.elements().dijkstra({
+			root: node,
+			weight: () => 1,
+		});
+		const path = dijkstra.pathTo(rootNode[0]);
+		if (!path || !path.length) return;
+
+		path.addClass("path-highlight");
+		path.nodes().removeClass("faded").addClass("focused");
+		path.edges().removeClass("faded");
 	};
 
 	const highlightNeighborhood = (node) => {
@@ -169,23 +239,103 @@
 		node.removeClass("faded").addClass("selected focused");
 		node.neighborhood().removeClass("faded").addClass("focused");
 		node.connectedEdges().removeClass("faded");
+		highlightRootPath(node);
 	};
 
 	const runLayout = () => {
 		if (!cy) return;
 		cy.resize();
-		cy.layout({
-			name: "cose",
+
+		const visibleNodes = cy.nodes(":visible");
+		if (!visibleNodes.length) return;
+
+		const commonOptions = {
 			animate: true,
 			animationDuration: 450,
 			fit: true,
-			padding: 40,
-			nodeRepulsion: 9000,
-			edgeElasticity: 120,
-			idealEdgeLength: 120,
-			gravity: 0.9,
-			numIter: 550,
-			randomize: true,
+			padding: 50,
+		};
+
+		if (selectedLayout === "cola") {
+			cy.layout({
+				name: "cola",
+				...commonOptions,
+				refresh: 2,
+				maxSimulationTime: 2600,
+				randomize: true,
+				avoidOverlap: true,
+				handleDisconnected: true,
+				nodeDimensionsIncludeLabels: true,
+				nodeSpacing: (node) => 28 + (node.data("size") || 24) * 0.6,
+				edgeLength: (edge) => (edge.data("type") === "RATED" ? 125 : 110),
+				convergenceThreshold: 0.01,
+			}).run();
+			return;
+		}
+
+		if (selectedLayout === "dagre") {
+			const dagreLayout = cy.layout({
+				name: "dagre",
+				animate: false,
+				fit: false,
+				rankDir: "TB",
+				nodeSep: 45,
+				rankSep: 90,
+				edgeSep: 20,
+				ranker: "network-simplex",
+			});
+
+			dagreLayout.one("layoutstop", () => {
+				if (!cy) return;
+				cy.layout({
+					name: "cola",
+					...commonOptions,
+					refresh: 2,
+					maxSimulationTime: 1200,
+					randomize: false,
+					avoidOverlap: true,
+					handleDisconnected: true,
+					nodeDimensionsIncludeLabels: true,
+					flow: { axis: "y", minSeparation: 70 },
+					nodeSpacing: (node) => 20 + (node.data("size") || 24) * 0.45,
+					edgeLength: (edge) => (edge.data("type") === "RATED" ? 105 : 95),
+					convergenceThreshold: 0.02,
+				}).run();
+			});
+
+			dagreLayout.run();
+			return;
+		}
+
+		if (selectedLayout === "concentric") {
+			cy.layout({
+				name: "concentric",
+				...commonOptions,
+				startAngle: (-Math.PI * 2) / 4,
+				clockwise: true,
+				avoidOverlap: true,
+				nodeDimensionsIncludeLabels: true,
+				minNodeSpacing: 26,
+				spacingFactor: 1.22,
+				concentric: (node) => {
+					const typeScore = TYPE_PRIORITY[node.data("type")] || 0;
+					return typeScore * 100 + (node.data("degree") || 0);
+				},
+				levelWidth: () => 100,
+			}).run();
+			return;
+		}
+
+		const userRoots = cy.nodes('[type = "User"]');
+		cy.layout({
+			name: "breadthfirst",
+			...commonOptions,
+			roots: userRoots.length ? userRoots : undefined,
+			directed: true,
+			circle: true,
+			spacingFactor: 1.65,
+			avoidOverlap: true,
+			nodeDimensionsIncludeLabels: true,
 		}).run();
 	};
 
@@ -333,6 +483,31 @@
 					{
 						selector: 'edge[type = "ACTED_IN"]',
 						style: { "line-color": "#fb923c" },
+					},
+					{
+						selector: "node.root-user",
+						style: {
+							"border-color": "#fef08a",
+							"border-width": 3,
+							shape: "star",
+						},
+					},
+					{
+						selector: "node.path-highlight",
+						style: {
+							"border-width": 4,
+							"border-color": "#fbbf24",
+							opacity: 1,
+							"text-opacity": 1,
+						},
+					},
+					{
+						selector: "edge.path-highlight",
+						style: {
+							width: 4,
+							"line-color": "#fbbf24",
+							opacity: 0.95,
+						},
 					},
 					{
 						selector: "node.faded",
@@ -586,6 +761,22 @@
 
 					<div class="border-t border-white/10 pt-4 space-y-3">
 						<p class="text-sm text-text-secondary">Layout controls</p>
+						<div>
+							<label for="layout-algorithm" class="text-sm text-text-secondary block mb-2">
+								Layout algorithm
+							</label>
+							<select
+								id="layout-algorithm"
+								bind:value={selectedLayout}
+								on:change={rerunLayout}
+								class="w-full bg-bg-primary border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-primary"
+							>
+								{#each LAYOUT_OPTIONS as layout}
+									<option value={layout.value}>{layout.label}</option>
+								{/each}
+							</select>
+							<p class="text-xs text-text-tertiary mt-2">{selectedLayoutHint}</p>
+						</div>
 						<div class="grid grid-cols-3 gap-2">
 							<button type="button" class="bg-bg-primary border border-white/10 rounded-lg py-2 hover:border-accent-primary" on:click={() => zoomBy(1.2)}>
 								Zoom +

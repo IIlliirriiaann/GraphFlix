@@ -220,6 +220,10 @@
 
 		await loadDashboardData(parsedUserId);
 	};
+
+	const openGraphExplorer = () => {
+		push("/graph");
+	};
 </script>
 
 <div class="min-h-screen p-8">
@@ -235,6 +239,23 @@
 			<p class="text-text-secondary text-lg">
 				Movie recommendations engine fueled by graph databases.
 			</p>
+
+			<div class="mt-6 inline-flex rounded-xl border border-white/10 bg-bg-secondary/70 p-1">
+				<button
+					type="button"
+					class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-primary text-white"
+					aria-current="page"
+				>
+					Recommendations
+				</button>
+				<button
+					type="button"
+					on:click={openGraphExplorer}
+					class="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary transition-colors"
+				>
+					Graph
+				</button>
+			</div>
 
 			<form class="mt-6 flex flex-col sm:flex-row gap-3" on:submit={handleUserSubmit}>
 				<div class="flex-1">

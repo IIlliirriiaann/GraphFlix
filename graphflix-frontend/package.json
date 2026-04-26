@@ -17,6 +17,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.13.6",
+    "cytoscape": "^3.33.1",
     "svelte-spa-router": "^5.0.0"
   }
 }

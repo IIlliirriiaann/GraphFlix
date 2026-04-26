@@ -27,11 +27,15 @@ export const getCustomRecommendations = (
 	weights,
 	limit = 10,
 ) =>
-	api.post(`/recommendations/custom`, {
+	api.post(`/recommendations/custom/legacy`, {
 		userId: String(userId),
 		weights,
 		limit,
 	});
+
+/** @param {number|string} userId @param {number} [depth=2] */
+export const getUserGraph = (userId, depth = 2) =>
+	api.get(`/graph/user/${userId}`, { params: { depth } });
 
 /** @param {number|string} userId @param {number} collaborativeWeight @param {number} contentWeight @param {number} [limit=10] */
 export const getHybridRecommendations = (
@@ -42,8 +46,10 @@ export const getHybridRecommendations = (
 ) =>
 	api.post(`/recommendations/hybrid`, {
 		userId: String(userId),
-		collaborativeWeight,
-		contentWeight,
+		weights: {
+			collaborativeWeight,
+			contentWeight,
+		},
 		limit,
 	});
 
@@ -58,10 +64,12 @@ export const getConfigurableRecommendations = (
 ) =>
 	api.post(`/recommendations/custom`, {
 		userId: String(userId),
-		genreWeight,
-		actorWeight,
-		ratingWeight,
-		popularityWeight,
+		weights: {
+			genreWeight,
+			actorWeight,
+			ratingWeight,
+			popularityWeight,
+		},
 		limit,
 	});
 

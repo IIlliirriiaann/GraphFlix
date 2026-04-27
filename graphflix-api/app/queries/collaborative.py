@@ -236,46 +236,47 @@ WITH collaborativeWeight, contentWeight,
      userGenres, userActors, userDirectors,
      candidate.rec AS rec
 OPTIONAL MATCH (rec)-[:IN_GENRE]->(recGenre:Genre)
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors,
      COLLECT(DISTINCT recGenre.name) AS recGenres
 OPTIONAL MATCH (rec)-[recActorRel]-(recActor)
 WHERE type(recActorRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors, recGenres,
      COLLECT(DISTINCT coalesce(recActor.name, recActor.fullName, toString(id(recActor)))) AS recActors
 OPTIONAL MATCH (rec)-[recDirectorRel]-(recDirector)
 WHERE type(recDirectorRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors,
      recGenres, recActors,
      COLLECT(DISTINCT coalesce(recDirector.name, recDirector.fullName, toString(id(recDirector)))) AS recDirectors
 
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      [g IN userGenres WHERE g IN recGenres] AS matchedGenres,
      [a IN userActors WHERE a IN recActors] AS matchedActors,
      [d IN userDirectors WHERE d IN recDirectors] AS matchedDirectors,
      (SIZE(userGenres) + SIZE(recGenres) - SIZE([g IN userGenres WHERE g IN recGenres])) AS genreUnion,
      (SIZE(userActors) + SIZE(recActors) - SIZE([a IN userActors WHERE a IN recActors])) AS actorUnion,
      (SIZE(userDirectors) + SIZE(recDirectors) - SIZE([d IN userDirectors WHERE d IN recDirectors])) AS directorUnion
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      CASE WHEN genreUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedGenres)) / toFloat(genreUnion) END AS genreJaccard,
      CASE WHEN actorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedActors)) / toFloat(actorUnion) END AS actorJaccard,
      CASE WHEN directorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedDirectors)) / toFloat(directorUnion) END AS directorJaccard
 
-OPTIONAL MATCH (candidate.rec)<-[allRatings:RATED]-()
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+OPTIONAL MATCH (rec)<-[allRatings:RATED]-()
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      (0.6 * genreJaccard + 0.3 * actorJaccard + 0.1 * directorJaccard) AS contentRaw,
      avg(toFloat(allRatings.rating)) AS avgRating,
      count(allRatings) AS numRatings
 WITH collaborativeWeight, contentWeight,
      candidate,
+     rec,
      recGenres,
      contentRaw,
      candidate.collaborativeRaw AS collaborativeRaw,
      coalesce(avgRating, 0.0) AS avgRating,
      toFloat(coalesce(numRatings, 0)) AS numRatings,
-     coalesce(toFloat(candidate.rec.year), toFloat(candidate.rec.releaseYear), 0.0) AS releaseYear
+     coalesce(toFloat(rec.year), toFloat(rec.releaseYear), 0.0) AS releaseYear
 
 WITH COLLECT({
     movieId: candidate.movieId,

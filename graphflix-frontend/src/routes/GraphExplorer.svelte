@@ -1,5 +1,6 @@
 <script>
 	import { onDestroy, onMount, tick } from "svelte";
+	import { get } from "svelte/store";
 	import { push } from "svelte-spa-router";
 	import cytoscape from "cytoscape";
 	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
@@ -7,6 +8,9 @@
 	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
 	import cytoscapeDagre from "cytoscape-dagre";
 	import { getRecommendationExplanationGraph, getUserGraph } from "../lib/api";
+	import { appStateStore, patchAppState } from "../lib/stores/appState";
+
+	export let embedded = false;
 
 	cytoscape.use(cytoscapeCola);
 	cytoscape.use(cytoscapeDagre);
@@ -64,7 +68,7 @@
 
 	let loading = false;
 	let errorMessage = "";
-	let userInput = "1";
+	let userInput = "";
 	let currentUserId = null;
 	let focusMovieId = null;
 	let focusRecommendationScore = null;
@@ -859,6 +863,14 @@
 				? await getRecommendationExplanationGraph(parsedUserId, focusMovieId)
 				: await getUserGraph(parsedUserId, depth);
 			currentUserId = parsedUserId;
+			patchAppState({
+				userInput: String(parsedUserId),
+				selectedUserId: parsedUserId,
+				depth,
+				focusMovieId,
+				focusScore: focusRecommendationScore,
+				algorithm: sourceAlgorithm,
+			});
 			await initializeGraph(response.data);
 		} catch (error) {
 			if (error?.response?.status === 404) {
@@ -945,6 +957,20 @@
 	};
 
 	onMount(() => {
+		const persisted = get(appStateStore);
+		if (persisted.selectedUserId) {
+			userInput = String(persisted.selectedUserId);
+		} else if (persisted.userInput) {
+			userInput = String(persisted.userInput);
+		}
+		depth = parseDepth(persisted.depth ?? depth);
+		focusMovieId = parseMovieId(persisted.focusMovieId);
+		focusRecommendationScore = parseOptionalScore(persisted.focusScore);
+		sourceAlgorithm = String(persisted.algorithm || "");
+		if (focusMovieId) {
+			graphMode = "explain";
+		}
+
 		const query = getRouteQueryParams();
 		const queryUserId = parseUserId(query.get("userId"));
 		if (queryUserId) {
@@ -962,8 +988,20 @@
 			graphMode = "explain";
 		}
 
+		patchAppState({
+			userInput,
+			selectedUserId: parseUserId(userInput),
+			depth,
+			focusMovieId,
+			focusScore: focusRecommendationScore,
+			algorithm: sourceAlgorithm,
+		});
+
 		window.addEventListener("resize", handleWindowResize);
-		generateGraph();
+
+		if (parseUserId(userInput)) {
+			generateGraph();
+		}
 	});
 
 	onDestroy(() => {
@@ -974,49 +1012,79 @@
 	$: if (cy) {
 		applyNodeTypeFilters();
 	}
+
+	$: if (embedded && $appStateStore.activeSection === "graph") {
+		const persistedUserId = parseUserId($appStateStore.selectedUserId || $appStateStore.userInput);
+		const persistedDepth = parseDepth($appStateStore.depth ?? depth);
+		const persistedFocusMovieId = parseMovieId($appStateStore.focusMovieId);
+		const persistedFocusScore = parseOptionalScore($appStateStore.focusScore);
+		const persistedAlgorithm = String($appStateStore.algorithm || "");
+
+		const shouldReload =
+			persistedUserId &&
+			(!graphRendered ||
+				persistedUserId !== currentUserId ||
+				persistedDepth !== depth ||
+				persistedFocusMovieId !== focusMovieId);
+
+		userInput = persistedUserId ? String(persistedUserId) : userInput;
+		depth = persistedDepth;
+		focusMovieId = persistedFocusMovieId;
+		focusRecommendationScore = persistedFocusScore;
+		sourceAlgorithm = persistedAlgorithm;
+		graphMode = focusMovieId ? "explain" : "generic";
+
+		if (shouldReload && !loading) {
+			generateGraph();
+		}
+	}
 </script>
 
-<div class="min-h-screen p-4 lg:p-8">
+<div class="p-4 lg:p-8" class:min-h-screen={!embedded}>
 	<div class="max-w-[1500px] mx-auto">
-		<div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-			<div>
-				<h1 class="font-mono text-3xl lg:text-4xl font-semibold uppercase tracking-wide">
-					Graph Explorer
-				</h1>
-				{#if graphMode === "explain" && focusMovieId}
-					<p class="text-text-secondary text-sm mt-1">
-						Recommendation explanation mode for user {userInput} around movie {focusMovieId}
-						{#if sourceAlgorithm}
-							({sourceAlgorithm}).
-						{:else}
-							.
-						{/if}
-					</p>
-				{:else}
-					<p class="text-text-secondary text-sm mt-1">
-						Interactive recommendation graph for users, movies, genres, and actors.
-					</p>
-				{/if}
+		{#if !embedded}
+			<div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+				<div>
+					<h1 class="font-mono text-3xl lg:text-4xl font-semibold uppercase tracking-wide">
+						Graph Explorer
+					</h1>
+					{#if graphMode === "explain" && focusMovieId}
+						<p class="text-text-secondary text-sm mt-1">
+							Recommendation explanation mode for user {userInput} around movie {focusMovieId}
+							{#if sourceAlgorithm}
+								({sourceAlgorithm}).
+							{:else}
+								.
+							{/if}
+						</p>
+					{:else}
+						<p class="text-text-secondary text-sm mt-1">
+							Interactive recommendation graph for users, movies, genres, and actors.
+						</p>
+					{/if}
+				</div>
+				<div class="inline-flex rounded-xl border border-white/10 bg-bg-secondary/70 p-1">
+					<button
+						type="button"
+						on:click={() => push("/")}
+						class="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary transition-colors"
+					>
+						Recommendations
+					</button>
+					<button
+						type="button"
+						class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-primary text-white"
+						aria-current="page"
+					>
+						Graph
+					</button>
+				</div>
 			</div>
-			<div class="inline-flex rounded-xl border border-white/10 bg-bg-secondary/70 p-1">
-				<button
-					type="button"
-					on:click={() => push("/")}
-					class="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary transition-colors"
-				>
-					Recommendations
-				</button>
-				<button
-					type="button"
-					class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-primary text-white"
-					aria-current="page"
-				>
-					Graph
-				</button>
-			</div>
-		</div>
+		{/if}
 
-		<div class="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 lg:gap-5 h-[calc(100vh-9rem)] min-h-[680px]">
+		<div class={`grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-4 lg:gap-5 min-h-[680px] ${
+			embedded ? "" : "h-[calc(100vh-9rem)]"
+		}`}>
 			<aside class="bg-bg-secondary/80 border border-white/10 rounded-xl p-4 lg:p-5 overflow-y-auto backdrop-blur">
 				<form
 					class="space-y-4"

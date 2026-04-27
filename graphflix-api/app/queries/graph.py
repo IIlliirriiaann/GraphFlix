@@ -93,7 +93,8 @@ CALL (u, focus) {
   ORDER BY toFloat(coalesce(ur.rating, 0.0)) DESC
   RETURN collect(DISTINCT {
     supportMovie: support,
-    sharedGenre: sharedGenre
+    sharedGenre: sharedGenre,
+    userRating: toFloat(coalesce(ur.rating, 0.0))
   })[..$maxSupportMovies] AS genreRows
 }
 
@@ -107,7 +108,8 @@ CALL (u, focus) {
   ORDER BY toFloat(coalesce(ur.rating, 0.0)) DESC
   RETURN collect(DISTINCT {
     supportMovie: support,
-    sharedActor: sharedActor
+    sharedActor: sharedActor,
+    userRating: toFloat(coalesce(ur.rating, 0.0))
   })[..$maxSupportMovies] AS actorRows
 }
 
@@ -148,7 +150,7 @@ CALL (sharedActorCandidates) {
   RETURN collect(DISTINCT n) AS sharedActors
 }
 
-WITH u, focus, collaborativeRows, similarUsers, bridgeMovies, supportMovies, sharedGenres, sharedActors,
+WITH u, focus, collaborativeRows, genreRows, actorRows, similarUsers, bridgeMovies, supportMovies, sharedGenres, sharedActors,
      [n IN ([u, focus] + similarUsers + bridgeMovies + supportMovies + sharedGenres + sharedActors) WHERE n IS NOT NULL] AS nodeCandidates
 
 CALL (nodeCandidates) {
@@ -157,7 +159,7 @@ CALL (nodeCandidates) {
   RETURN collect(n)[..250] AS limitedNodes
 }
 
-WITH u, focus, collaborativeRows, similarUsers, bridgeMovies, supportMovies, sharedGenres, sharedActors, limitedNodes,
+WITH u, focus, collaborativeRows, genreRows, actorRows, similarUsers, bridgeMovies, supportMovies, sharedGenres, sharedActors, limitedNodes,
      [n IN limitedNodes | elementId(n)] AS limitedNodeIds
 
 WITH [n IN limitedNodes | {
@@ -185,6 +187,66 @@ WITH [n IN limitedNodes | {
       WHEN n IN sharedGenres THEN 'shared_genre'
       WHEN n IN sharedActors THEN 'shared_actor'
       ELSE 'context'
+    END,
+    overlapCount: CASE
+      WHEN n IN similarUsers THEN coalesce(head([row IN collaborativeRows WHERE row.simNode = n | toInteger(row.overlap)]), 0)
+      ELSE null
+    END,
+    focusMovieRating: CASE
+      WHEN n IN similarUsers THEN coalesce(head([row IN collaborativeRows WHERE row.simNode = n | toFloat(row.focusRating)]), 0.0)
+      ELSE null
+    END,
+    commonBridgeMoviesCount: CASE
+      WHEN n IN similarUsers THEN size(coalesce(head([row IN collaborativeRows WHERE row.simNode = n | row.commonMovies]), []))
+      ELSE null
+    END,
+    supportingSimilarUsers: CASE
+      WHEN n IN bridgeMovies THEN size([row IN collaborativeRows WHERE n IN coalesce(row.commonMovies, [])])
+      ELSE null
+    END,
+    supportGenreMatches: CASE
+      WHEN n IN supportMovies THEN size([row IN genreRows WHERE row.supportMovie = n])
+      ELSE null
+    END,
+    supportActorMatches: CASE
+      WHEN n IN supportMovies THEN size([row IN actorRows WHERE row.supportMovie = n])
+      ELSE null
+    END,
+    bestUserRating: CASE
+      WHEN n IN supportMovies THEN reduce(
+        maxRating = 0.0,
+        rating IN (
+          [row IN genreRows WHERE row.supportMovie = n | toFloat(coalesce(row.userRating, 0.0))] +
+          [row IN actorRows WHERE row.supportMovie = n | toFloat(coalesce(row.userRating, 0.0))]
+        ) |
+        CASE WHEN rating > maxRating THEN rating ELSE maxRating END
+      )
+      ELSE null
+    END,
+    matchedSupportMovieCount: CASE
+      WHEN n IN sharedGenres THEN size([row IN genreRows WHERE row.sharedGenre = n])
+      WHEN n IN sharedActors THEN size([row IN actorRows WHERE row.sharedActor = n])
+      ELSE null
+    END,
+    similarUserCount: CASE
+      WHEN elementId(n) = elementId(focus) THEN size(similarUsers)
+      ELSE null
+    END,
+    bridgeMovieCount: CASE
+      WHEN elementId(n) = elementId(focus) THEN size(bridgeMovies)
+      ELSE null
+    END,
+    supportMovieCount: CASE
+      WHEN elementId(n) = elementId(focus) OR elementId(n) = elementId(u) THEN size(supportMovies)
+      ELSE null
+    END,
+    sharedGenreCount: CASE
+      WHEN elementId(n) = elementId(focus) THEN size(sharedGenres)
+      ELSE null
+    END,
+    sharedActorCount: CASE
+      WHEN elementId(n) = elementId(focus) THEN size(sharedActors)
+      ELSE null
     END
   }
 }] AS nodes,

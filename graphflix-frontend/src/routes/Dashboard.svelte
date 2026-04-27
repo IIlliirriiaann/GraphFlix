@@ -64,6 +64,24 @@
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 	};
 
+	const getRecommendationScore = (movie) => {
+		if (!movie || typeof movie !== "object") return null;
+		const candidates = [
+			movie.score,
+			movie.hybridScore,
+			movie.compositeScore,
+			movie.totalScore,
+			movie.weightedScore,
+		];
+		for (const candidate of candidates) {
+			const parsed = Number(candidate);
+			if (Number.isFinite(parsed)) {
+				return parsed;
+			}
+		}
+		return null;
+	};
+
 	const parseUserId = (value) => {
 		const parsed = Number.parseInt(value, 10);
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -235,9 +253,9 @@
 		push(queryString ? `/graph?${queryString}` : "/graph");
 	};
 
-	const openMovieInGraph = (movieId) => {
+	const openMovieInGraph = (movie) => {
 		const parsedUserId = selectedUserId || parseUserId(userInput);
-		const parsedMovieId = parseMovieId(movieId);
+		const parsedMovieId = parseMovieId(movie?.movieId);
 
 		if (!parsedUserId || !parsedMovieId) {
 			return;
@@ -248,6 +266,10 @@
 		query.set("userId", String(parsedUserId));
 		query.set("focusMovieId", String(parsedMovieId));
 		query.set("algorithm", selectedAlgorithm);
+		const recommendationScore = getRecommendationScore(movie);
+		if (recommendationScore !== null) {
+			query.set("focusScore", String(recommendationScore));
+		}
 		push(`/graph?${query.toString()}`);
 	};
 </script>
@@ -574,7 +596,7 @@
 							/>
 							<button
 								type="button"
-								on:click={() => openMovieInGraph(movie.movieId)}
+								on:click={() => openMovieInGraph(movie)}
 								class="w-full bg-bg-secondary border border-white/10 rounded-lg px-3 py-2 text-xs text-text-secondary hover:text-text-primary hover:border-accent-primary transition-colors"
 							>
 								View in graph

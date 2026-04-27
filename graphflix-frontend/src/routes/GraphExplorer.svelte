@@ -48,6 +48,17 @@
 		Actor: 1,
 	};
 
+	const EXPLANATION_ROLE_LABELS = {
+		focus_movie: "Focused recommendation",
+		target_user: "Target user",
+		similar_user: "Similar user signal",
+		bridge_movie: "Bridge movie",
+		support_movie: "Support movie",
+		shared_genre: "Shared genre evidence",
+		shared_actor: "Shared actor evidence",
+		context: "Context node",
+	};
+
 	let cy = null;
 	let cyContainer;
 
@@ -56,6 +67,7 @@
 	let userInput = "1";
 	let currentUserId = null;
 	let focusMovieId = null;
+	let focusRecommendationScore = null;
 	let graphMode = "generic";
 	let sourceAlgorithm = "";
 	let depth = 2;
@@ -75,7 +87,11 @@
 		y: 0,
 		label: "",
 		type: "",
+		roleLabel: "",
 		connections: 0,
+		scoreMetrics: [],
+		evidenceMetrics: [],
+		relationshipMetrics: [],
 	};
 
 	$: selectedLayoutHint =
@@ -98,6 +114,18 @@
 	};
 
 	const parseGraphMode = (value) => (value === "explain" ? "explain" : "generic");
+
+	const parseOptionalScore = (value) => {
+		if (value === null || value === undefined || value === "") return null;
+		const parsed = Number.parseFloat(String(value));
+		return Number.isFinite(parsed) ? parsed : null;
+	};
+
+	const formatMetricNumber = (value, decimals = 2) => {
+		const parsed = Number(value);
+		if (!Number.isFinite(parsed)) return null;
+		return Number(parsed.toFixed(decimals)).toString();
+	};
 
 	const getNodeType = (type) => {
 		if (type === "Movie" || type === "User" || type === "Genre" || type === "Actor") {
@@ -144,12 +172,13 @@
 			const id = String(node.id);
 			const type = getNodeType(node.type);
 			const degree = degreeById[id] || 0;
-			const nodeMovieId = parseMovieId(node.properties?.movieId);
+			const baseProperties = node.properties || {};
+			const nodeMovieId = parseMovieId(baseProperties.movieId);
 			const role = String(node.properties?.explanationRole || "");
 			const isRootUser =
 				type === "User" &&
 				rootUserId &&
-				(String(node.properties?.userId) === rootUserId || id === rootUserId);
+				(String(baseProperties.userId) === rootUserId || id === rootUserId);
 			const isFocusMovie =
 				type === "Movie" &&
 				focusMovieId !== null &&
@@ -158,13 +187,22 @@
 			const isSupportMovie = type === "Movie" && role === "support_movie";
 			const isBridgeMovie = type === "Movie" && role === "bridge_movie";
 			const isSimilarUser = type === "User" && role === "similar_user";
+			const properties = {
+				...baseProperties,
+			};
+			if (isFocusMovie && focusRecommendationScore !== null) {
+				properties.recommendationScore = focusRecommendationScore;
+			}
+			if (isFocusMovie && sourceAlgorithm) {
+				properties.recommendationAlgorithm = sourceAlgorithm;
+			}
 			return {
 				group: "nodes",
 				data: {
 					id,
 					label: getNodeLabel(node),
 					type,
-					properties: node.properties || {},
+					properties,
 					explanationRole: role,
 					degree,
 					size: Math.min(68, 24 + degree * 4),
@@ -215,6 +253,127 @@
 		};
 
 		return [...nodes, ...edges];
+	};
+
+	const buildTooltipDetails = (node) => {
+		const nodeData = node.data();
+		const properties = nodeData.properties || {};
+		const role = String(nodeData.explanationRole || properties.explanationRole || "");
+		const roleLabel = EXPLANATION_ROLE_LABELS[role] || "";
+
+		const scoreMetrics = [];
+		const pushScoreMetric = (label, value, decimals = 3) => {
+			const formatted = formatMetricNumber(value, decimals);
+			if (formatted === null || formatted === "0") return;
+			scoreMetrics.push({ label, value: formatted });
+		};
+
+		pushScoreMetric("Recommendation score", properties.recommendationScore);
+		pushScoreMetric("Collaborative score", properties.score);
+		pushScoreMetric("Hybrid score", properties.hybridScore);
+		pushScoreMetric("Composite score", properties.compositeScore);
+		pushScoreMetric("Content score", properties.totalScore);
+		pushScoreMetric("Weighted score", properties.weightedScore);
+		pushScoreMetric("Predicted rating", properties.predictedRating, 2);
+		pushScoreMetric("Average rating", properties.avgRating, 2);
+		pushScoreMetric("Similar user rating on focus", properties.focusMovieRating, 2);
+		pushScoreMetric("Best support rating", properties.bestUserRating, 2);
+
+		const evidenceMetrics = [];
+		const pushEvidenceMetric = (label, value, decimals = 0) => {
+			const formatted = formatMetricNumber(value, decimals);
+			if (formatted === null || formatted === "0") return;
+			evidenceMetrics.push({ label, value: formatted });
+		};
+
+		pushEvidenceMetric("Overlap with target user", properties.overlapCount);
+		pushEvidenceMetric("Common bridge movies", properties.commonBridgeMoviesCount);
+		pushEvidenceMetric("Supporting similar users", properties.supportingSimilarUsers);
+		pushEvidenceMetric("Genre support matches", properties.supportGenreMatches);
+		pushEvidenceMetric("Actor support matches", properties.supportActorMatches);
+		pushEvidenceMetric("Matched support movies", properties.matchedSupportMovieCount);
+		pushEvidenceMetric("Similar users linked", properties.similarUserCount);
+		pushEvidenceMetric("Bridge movies linked", properties.bridgeMovieCount);
+		pushEvidenceMetric("Support movies linked", properties.supportMovieCount);
+		pushEvidenceMetric("Shared genres linked", properties.sharedGenreCount);
+		pushEvidenceMetric("Shared actors linked", properties.sharedActorCount);
+
+		const neighborTypeCounts = {
+			Movie: 0,
+			User: 0,
+			Genre: 0,
+			Actor: 0,
+		};
+		node
+			.neighborhood("node")
+			.forEach((neighbor) => {
+				const neighborType = getNodeType(neighbor.data("type"));
+				if (neighborTypeCounts[neighborType] !== undefined) {
+					neighborTypeCounts[neighborType] += 1;
+				}
+			});
+
+		if (neighborTypeCounts.Movie > 0) {
+			evidenceMetrics.push({ label: "Neighbor movies", value: String(neighborTypeCounts.Movie) });
+		}
+		if (neighborTypeCounts.User > 0) {
+			evidenceMetrics.push({ label: "Neighbor users", value: String(neighborTypeCounts.User) });
+		}
+		if (neighborTypeCounts.Genre > 0) {
+			evidenceMetrics.push({ label: "Neighbor genres", value: String(neighborTypeCounts.Genre) });
+		}
+		if (neighborTypeCounts.Actor > 0) {
+			evidenceMetrics.push({ label: "Neighbor actors", value: String(neighborTypeCounts.Actor) });
+		}
+
+		const edgeTypeCounts = {};
+		const ratedWeights = [];
+		node.connectedEdges().forEach((edge) => {
+			const edgeType = String(edge.data("type") || "LINK");
+			edgeTypeCounts[edgeType] = (edgeTypeCounts[edgeType] || 0) + 1;
+			if (edgeType === "RATED") {
+				const edgeWeight = Number(edge.data("weight"));
+				if (Number.isFinite(edgeWeight)) {
+					ratedWeights.push(edgeWeight);
+				}
+			}
+		});
+
+		const relationshipMetrics = [];
+		const importantEdgeTypes = [
+			"RECOMMENDED",
+			"SIMILAR_USER",
+			"RATED",
+			"IN_GENRE",
+			"ACTED_IN",
+			"DIRECTED",
+		];
+		for (const edgeType of importantEdgeTypes) {
+			if (!edgeTypeCounts[edgeType]) continue;
+			relationshipMetrics.push({
+				label: `${edgeType} edges`,
+				value: String(edgeTypeCounts[edgeType]),
+			});
+		}
+
+		if (ratedWeights.length > 0) {
+			const averageRatedWeight =
+				ratedWeights.reduce((sum, value) => sum + value, 0) / ratedWeights.length;
+			relationshipMetrics.push({
+				label: "Average RATED weight",
+				value: formatMetricNumber(averageRatedWeight, 2) || "-",
+			});
+		}
+
+		return {
+			label: nodeData.label,
+			type: nodeData.type,
+			roleLabel,
+			connections: nodeData.degree || node.connectedEdges().length || 0,
+			scoreMetrics,
+			evidenceMetrics,
+			relationshipMetrics,
+		};
 	};
 
 	const getNodeVisibility = (type) => {
@@ -407,12 +566,21 @@
 
 		cy.on("mouseover", "node", (event) => {
 			const node = event.target;
+			const details = buildTooltipDetails(node);
+			const mouseEvent = event.originalEvent;
+			let x = tooltip.x;
+			let y = tooltip.y;
+			if (mouseEvent?.clientX && mouseEvent?.clientY && cyContainer) {
+				const rect = cyContainer.getBoundingClientRect();
+				x = mouseEvent.clientX - rect.left + 12;
+				y = mouseEvent.clientY - rect.top + 12;
+			}
 			tooltip = {
 				...tooltip,
 				visible: true,
-				label: node.data("label"),
-				type: node.data("type"),
-				connections: node.data("degree") || 0,
+				x,
+				y,
+				...details,
 			};
 		});
 
@@ -787,6 +955,7 @@
 		depth = queryDepth;
 
 		focusMovieId = parseMovieId(query.get("focusMovieId"));
+		focusRecommendationScore = parseOptionalScore(query.get("focusScore"));
 		graphMode = parseGraphMode(query.get("mode"));
 		sourceAlgorithm = String(query.get("algorithm") || "");
 		if (focusMovieId && graphMode === "generic") {
@@ -1066,12 +1235,54 @@
 
 				{#if tooltip.visible}
 					<div
-						class="absolute z-30 pointer-events-none bg-bg-primary/95 border border-white/10 rounded-md px-3 py-2 text-xs max-w-56"
+						class="absolute z-30 pointer-events-none bg-bg-primary/95 border border-white/10 rounded-md px-3 py-2 text-xs max-w-80"
 						style={`left: ${tooltip.x}px; top: ${tooltip.y}px;`}
 					>
 						<p class="font-semibold break-words">{tooltip.label}</p>
 						<p class="text-text-secondary">{tooltip.type}</p>
+						{#if tooltip.roleLabel}
+							<p class="text-accent-secondary">{tooltip.roleLabel}</p>
+						{/if}
 						<p class="text-text-tertiary">Connections: {tooltip.connections}</p>
+						{#if sourceAlgorithm && tooltip.scoreMetrics.length > 0}
+							<p class="text-text-tertiary">Algorithm: {sourceAlgorithm}</p>
+						{/if}
+
+						{#if tooltip.scoreMetrics.length > 0}
+							<div class="border-t border-white/10 mt-2 pt-2">
+								<p class="text-[11px] uppercase tracking-wide text-text-tertiary mb-1">Scores</p>
+								{#each tooltip.scoreMetrics as metric}
+									<p class="flex items-center justify-between gap-3">
+										<span class="text-text-secondary">{metric.label}</span>
+										<span class="text-text-primary">{metric.value}</span>
+									</p>
+								{/each}
+							</div>
+						{/if}
+
+						{#if tooltip.evidenceMetrics.length > 0}
+							<div class="border-t border-white/10 mt-2 pt-2">
+								<p class="text-[11px] uppercase tracking-wide text-text-tertiary mb-1">Evidence</p>
+								{#each tooltip.evidenceMetrics as metric}
+									<p class="flex items-center justify-between gap-3">
+										<span class="text-text-secondary">{metric.label}</span>
+										<span class="text-text-primary">{metric.value}</span>
+									</p>
+								{/each}
+							</div>
+						{/if}
+
+						{#if tooltip.relationshipMetrics.length > 0}
+							<div class="border-t border-white/10 mt-2 pt-2">
+								<p class="text-[11px] uppercase tracking-wide text-text-tertiary mb-1">Relationships</p>
+								{#each tooltip.relationshipMetrics as metric}
+									<p class="flex items-center justify-between gap-3">
+										<span class="text-text-secondary">{metric.label}</span>
+										<span class="text-text-primary">{metric.value}</span>
+									</p>
+								{/each}
+							</div>
+						{/if}
 					</div>
 				{/if}
 

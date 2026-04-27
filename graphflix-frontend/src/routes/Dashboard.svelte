@@ -1,5 +1,6 @@
 <script>
 	import { onDestroy, onMount } from "svelte";
+	import { get } from "svelte/store";
 	import { push } from "svelte-spa-router";
 	import { 
 		getRecommendations,
@@ -9,6 +10,8 @@
 		getUserStats 
 	} from "../lib/api";
 	import MovieCard from "../lib/MovieCard.svelte";
+	import GraphExplorer from "./GraphExplorer.svelte";
+	import { appStateStore, patchAppState } from "../lib/stores/appState";
 
 	let recommendations = [];
 	let stats = null;
@@ -19,6 +22,8 @@
 	let recommendationLimit = 10;
 	let selectedAlgorithm = "collaborative";
 	let autoReloadTimeout = null;
+	let activeSection = "recommendations";
+	let showGraphSection = false;
 
 	// Hybrid algorithm weights
 	let collaborativeWeight = 0.6;
@@ -46,7 +51,41 @@
 	};
 
 	onMount(() => {
-		// Page ready, waiting for user input
+		const persisted = get(appStateStore);
+		userInput = persisted.userInput || "";
+		selectedUserId = persisted.selectedUserId;
+		recommendations = Array.isArray(persisted.recommendations) ? persisted.recommendations : [];
+		recommendationLimit = parseLimit(persisted.recommendationLimit ?? recommendationLimit);
+		selectedAlgorithm = persisted.selectedAlgorithm || selectedAlgorithm;
+		collaborativeWeight = clampWeight(persisted.collaborativeWeight ?? collaborativeWeight);
+		contentWeight = clampWeight(persisted.contentWeight ?? contentWeight);
+		hybridPreset = persisted.hybridPreset || hybridPreset;
+		genreWeight = clampWeight(persisted.genreWeight ?? genreWeight);
+		actorWeight = clampWeight(persisted.actorWeight ?? actorWeight);
+		ratingWeight = clampWeight(persisted.ratingWeight ?? ratingWeight);
+		popularityWeight = clampWeight(persisted.popularityWeight ?? popularityWeight);
+		configurablePreset = persisted.configurablePreset || configurablePreset;
+
+		const isGraphPath = window.location.pathname === "/graph" || window.location.hash.startsWith("#/graph");
+		activeSection = isGraphPath ? "graph" : persisted.activeSection || "recommendations";
+		showGraphSection = activeSection === "graph";
+
+		patchAppState({
+			activeSection,
+			userInput,
+			selectedUserId,
+			recommendations,
+			recommendationLimit,
+			selectedAlgorithm,
+			collaborativeWeight,
+			contentWeight,
+			hybridPreset,
+			genreWeight,
+			actorWeight,
+			ratingWeight,
+			popularityWeight,
+			configurablePreset,
+		});
 	});
 
 	onDestroy(() => {
@@ -55,8 +94,39 @@
 		}
 	});
 
+	const openSection = (section) => {
+		activeSection = section;
+		if (section === "graph") {
+			showGraphSection = true;
+		}
+		patchAppState({ activeSection: section });
+	};
+
 	const handleMovieClick = (movieId) => {
 		push(`/movie/${movieId}`);
+	};
+
+	const parseMovieId = (value) => {
+		const parsed = Number.parseInt(String(value), 10);
+		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+	};
+
+	const getRecommendationScore = (movie) => {
+		if (!movie || typeof movie !== "object") return null;
+		const candidates = [
+			movie.score,
+			movie.hybridScore,
+			movie.compositeScore,
+			movie.totalScore,
+			movie.weightedScore,
+		];
+		for (const candidate of candidates) {
+			const parsed = Number(candidate);
+			if (Number.isFinite(parsed)) {
+				return parsed;
+			}
+		}
+		return null;
 	};
 
 	const parseUserId = (value) => {
@@ -190,6 +260,18 @@
 			selectedUserId = userId;
 			recommendations = recRes.data.recommendations;
 			stats = statsRes.data.stats;
+
+			const recommendedMovieIds = recommendations
+				.map((movie) => parseMovieId(movie?.movieId))
+				.filter((movieId) => movieId !== null)
+				.slice(0, 50);
+
+			patchAppState({
+				userInput: String(userId),
+				selectedUserId,
+				recommendations,
+				recommendedMovieIds,
+			});
 		} catch (error) {
 			if (error?.response?.status === 404) {
 				errorMessage = `User ${userId} not found.`;
@@ -217,13 +299,73 @@
 
 		userInput = String(parsedUserId);
 		selectedUserId = parsedUserId;
+		patchAppState({ userInput, selectedUserId });
 
 		await loadDashboardData(parsedUserId);
 	};
 
 	const openGraphExplorer = () => {
-		push("/graph");
+		const recommendedMovieIds = recommendations
+			.map((movie) => parseMovieId(movie?.movieId))
+			.filter((movieId) => movieId !== null)
+			.slice(0, 50);
+
+		patchAppState({
+			userInput,
+			selectedUserId,
+			recommendations,
+			recommendedMovieIds,
+			focusMovieId: null,
+			depth: 2,
+		});
+
+		openSection("graph");
 	};
+
+	const openMovieInGraph = (movie) => {
+		const parsedUserId = selectedUserId || parseUserId(userInput);
+		const parsedMovieId = parseMovieId(movie?.movieId);
+
+		if (!parsedUserId || !parsedMovieId) {
+			return;
+		}
+
+		const recommendationScore = getRecommendationScore(movie);
+		const recommendedMovieIds = recommendations
+			.map((item) => parseMovieId(item?.movieId))
+			.filter((movieId) => movieId !== null)
+			.slice(0, 50);
+
+		patchAppState({
+			userInput: String(parsedUserId),
+			selectedUserId: parsedUserId,
+			recommendations,
+			recommendedMovieIds,
+			focusMovieId: parsedMovieId,
+			depth: 2,
+			focusScore: recommendationScore,
+			algorithm: selectedAlgorithm,
+		});
+
+		openSection("graph");
+	};
+
+	$: patchAppState({
+		activeSection,
+		userInput,
+		selectedUserId,
+		recommendations,
+		recommendationLimit,
+		selectedAlgorithm,
+		collaborativeWeight,
+		contentWeight,
+		hybridPreset,
+		genreWeight,
+		actorWeight,
+		ratingWeight,
+		popularityWeight,
+		configurablePreset,
+	});
 </script>
 
 <div class="min-h-screen p-8">
@@ -243,15 +385,25 @@
 			<div class="mt-6 inline-flex rounded-xl border border-white/10 bg-bg-secondary/70 p-1">
 				<button
 					type="button"
-					class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-primary text-white"
-					aria-current="page"
+					on:click={() => openSection("recommendations")}
+					class={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+						activeSection === "recommendations"
+							? "bg-accent-primary text-white"
+							: "text-text-secondary hover:text-text-primary hover:bg-bg-primary"
+					}`}
+					aria-current={activeSection === "recommendations" ? "page" : undefined}
 				>
 					Recommendations
 				</button>
 				<button
 					type="button"
 					on:click={openGraphExplorer}
-					class="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary transition-colors"
+					class={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+						activeSection === "graph"
+							? "bg-accent-primary text-white"
+							: "text-text-secondary hover:text-text-primary hover:bg-bg-primary"
+					}`}
+					aria-current={activeSection === "graph" ? "page" : undefined}
 				>
 					Graph
 				</button>
@@ -280,8 +432,9 @@
 				</div>
 			</form>
 
-			<!-- Algorithm Selection -->
-			<div class="mt-6 bg-bg-secondary/70 border border-white/10 rounded-xl p-4 sm:p-5">
+			<div class:hidden={activeSection !== "recommendations"}>
+				<!-- Algorithm Selection -->
+				<div class="mt-6 bg-bg-secondary/70 border border-white/10 rounded-xl p-4 sm:p-5">
 				<p class="text-sm text-text-secondary block mb-3">
 					Select recommendation algorithm
 				</p>
@@ -495,59 +648,77 @@
 						Using custom weighted scoring across all factors
 					{/if}
 				</p>
-			</div>
+				</div>
 
-			{#if errorMessage}
-				<p class="mt-3 text-sm text-red-400">{errorMessage}</p>
-			{/if}
+				{#if errorMessage}
+					<p class="mt-3 text-sm text-red-400">{errorMessage}</p>
+				{/if}
+			</div>
 		</div>
 
-		<!-- Stats Card -->
-		{#if stats}
-			<div
-				class="bg-gradient-to-br from-accent-primary/10 to-accent-secondary/5 border border-accent-primary/30 rounded-xl p-6 mb-12 backdrop-blur"
-			>
-				<h2 class="text-xl font-semibold mb-4">Results for User {selectedUserId}:</h2>
-				<p class="text-text-secondary">
-					{stats.moviesRated} movies rated • {stats.numGenres} genres explored
-					{#if stats.avgRating}
-						• {stats.avgRating.toFixed(1)} avg rating
-					{/if}
-				</p>
-			</div>
-		{/if}
-
-		<!-- Recommendations -->
-		<div class="mb-8">
-			<div class="flex items-center justify-between mb-6">
-				<h2 class="font-mono text-2xl font-semibold uppercase tracking-wide">
-					Recommendations
-				</h2>
-				<button
-					class="text-accent-primary hover:underline text-sm"
-					disabled={!selectedUserId || loading}
-					on:click={() => loadDashboardData(selectedUserId)}
+		<section class:hidden={activeSection !== "recommendations"}>
+			<!-- Stats Card -->
+			{#if stats}
+				<div
+					class="bg-gradient-to-br from-accent-primary/10 to-accent-secondary/5 border border-accent-primary/30 rounded-xl p-6 mb-12 backdrop-blur"
 				>
-					Refresh
-				</button>
-			</div>
-
-			{#if loading}
-				<div class="text-center py-12 text-text-secondary">Loading...</div>
-			{:else if recommendations.length === 0}
-				<div class="text-center py-12 text-text-secondary">
-					No recommendations available
-				</div>
-			{:else}
-				<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-					{#each recommendations as movie}
-						<MovieCard
-							{movie}
-							onClick={() => handleMovieClick(movie.movieId)}
-						/>
-					{/each}
+					<h2 class="text-xl font-semibold mb-4">Results for User {selectedUserId}:</h2>
+					<p class="text-text-secondary">
+						{stats.moviesRated} movies rated • {stats.numGenres} genres explored
+						{#if stats.avgRating}
+							• {stats.avgRating.toFixed(1)} avg rating
+						{/if}
+					</p>
 				</div>
 			{/if}
-		</div>
+
+			<!-- Recommendations -->
+			<div class="mb-8">
+				<div class="flex items-center justify-between mb-6">
+					<h2 class="font-mono text-2xl font-semibold uppercase tracking-wide">
+						Recommendations
+					</h2>
+					<button
+						class="text-accent-primary hover:underline text-sm"
+						disabled={!selectedUserId || loading}
+						on:click={() => loadDashboardData(selectedUserId)}
+					>
+						Refresh
+					</button>
+				</div>
+
+				{#if loading}
+					<div class="text-center py-12 text-text-secondary">Loading...</div>
+				{:else if recommendations.length === 0}
+					<div class="text-center py-12 text-text-secondary">
+						No recommendations available
+					</div>
+				{:else}
+					<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+						{#each recommendations as movie}
+							<div class="space-y-2">
+								<MovieCard
+									{movie}
+									onClick={() => handleMovieClick(movie.movieId)}
+								/>
+								<button
+									type="button"
+									on:click={() => openMovieInGraph(movie)}
+									class="w-full bg-bg-secondary border border-white/10 rounded-lg px-3 py-2 text-xs text-text-secondary hover:text-text-primary hover:border-accent-primary transition-colors"
+								>
+									View in graph
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		{#if showGraphSection}
+			<section class:hidden={activeSection !== "graph"}>
+				<GraphExplorer embedded={true} />
+			</section>
+		{/if}
 	</div>
 </div>

@@ -37,6 +37,17 @@ export const getCustomRecommendations = (
 export const getUserGraph = (userId, depth = 2) =>
 	api.get(`/graph/user/${userId}`, { params: { depth } });
 
+/** @param {number|string} userId @param {number|string} movieId @param {{ minRating?: number, maxSimilarUsers?: number, maxSupportMovies?: number, maxBridgeMovies?: number }} [options={}] */
+export const getRecommendationExplanationGraph = (userId, movieId, options = {}) =>
+	api.get(`/graph/explain/user/${userId}/movie/${movieId}`, {
+		params: {
+			min_rating: options.minRating,
+			max_similar_users: options.maxSimilarUsers,
+			max_support_movies: options.maxSupportMovies,
+			max_bridge_movies: options.maxBridgeMovies,
+		},
+	});
+
 /** @param {number|string} userId @param {number} collaborativeWeight @param {number} contentWeight @param {number} [limit=10] */
 export const getHybridRecommendations = (
 	userId,

@@ -18,6 +18,8 @@
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.13.6",
     "cytoscape": "^3.33.1",
+    "cytoscape-cola": "^2.5.1",
+    "cytoscape-dagre": "^2.5.0",
     "svelte-spa-router": "^5.0.0"
   }
 }

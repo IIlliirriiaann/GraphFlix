@@ -51,9 +51,6 @@
 					style="width: {Math.min(movie.score * 10, 100)}%"
 				></div>
 			</div>
-			<div class="text-text-tertiary text-xs font-mono uppercase tracking-wide">
-				{movie.score} match score
-			</div>
 		{/if}
 	</div>
 </button>

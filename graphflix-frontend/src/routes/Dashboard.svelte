@@ -305,21 +305,14 @@
 	};
 
 	const openGraphExplorer = () => {
-		const recommendedMovieIds = recommendations
-			.map((movie) => parseMovieId(movie?.movieId))
-			.filter((movieId) => movieId !== null)
-			.slice(0, 50);
+		if (!Array.isArray(recommendations) || recommendations.length === 0) {
+			errorMessage =
+				"Load recommendations first, then open a graph explanation from a recommended movie.";
+			return;
+		}
 
-		patchAppState({
-			userInput,
-			selectedUserId,
-			recommendations,
-			recommendedMovieIds,
-			focusMovieId: null,
-			depth: 2,
-		});
-
-		openSection("graph");
+		const firstRecommendation = recommendations[0];
+		openMovieInGraph(firstRecommendation);
 	};
 
 	const openMovieInGraph = (movie) => {

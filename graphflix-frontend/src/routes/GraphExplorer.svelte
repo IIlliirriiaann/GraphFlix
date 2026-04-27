@@ -7,7 +7,7 @@
 	import cytoscapeCola from "cytoscape-cola";
 	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
 	import cytoscapeDagre from "cytoscape-dagre";
-	import { getRecommendationExplanationGraph, getUserGraph } from "../lib/api";
+	import { getRecommendationExplanationGraph } from "../lib/api";
 	import { appStateStore, patchAppState } from "../lib/stores/appState";
 
 	export let embedded = false;
@@ -72,7 +72,7 @@
 	let currentUserId = null;
 	let focusMovieId = null;
 	let focusRecommendationScore = null;
-	let graphMode = "generic";
+	let graphMode = "explain";
 	let sourceAlgorithm = "";
 	let depth = 2;
 	let selectedLayout = "cola";
@@ -117,7 +117,7 @@
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 	};
 
-	const parseGraphMode = (value) => (value === "explain" ? "explain" : "generic");
+	const parseGraphMode = () => "explain";
 
 	const parseOptionalScore = (value) => {
 		if (value === null || value === undefined || value === "") return null;
@@ -852,16 +852,20 @@
 			return;
 		}
 
+		if (!focusMovieId) {
+			errorMessage =
+				"No focused recommendation selected. Use 'View in graph' from a recommendation card.";
+			graphRendered = false;
+			return;
+		}
+
 		loading = true;
 		errorMessage = "";
 		graphRendered = false;
 		depth = parseDepth(depth);
 
 		try {
-			const shouldExplain = graphMode === "explain" && focusMovieId !== null;
-			const response = shouldExplain
-				? await getRecommendationExplanationGraph(parsedUserId, focusMovieId)
-				: await getUserGraph(parsedUserId, depth);
+			const response = await getRecommendationExplanationGraph(parsedUserId, focusMovieId);
 			currentUserId = parsedUserId;
 			patchAppState({
 				userInput: String(parsedUserId),
@@ -874,11 +878,10 @@
 			await initializeGraph(response.data);
 		} catch (error) {
 			if (error?.response?.status === 404) {
-				errorMessage = `User ${parsedUserId} not found.`;
-			} else if (error?.response?.status === 422) {
-				errorMessage = "Depth must be between 1 and 3.";
+				errorMessage =
+					"No explanation graph found for this recommendation. Try another movie from the list.";
 			} else {
-				errorMessage = "Unable to load graph data right now.";
+				errorMessage = "Unable to load recommendation explanation right now.";
 			}
 			console.error("Graph loading error:", error);
 		} finally {
@@ -967,9 +970,7 @@
 		focusMovieId = parseMovieId(persisted.focusMovieId);
 		focusRecommendationScore = parseOptionalScore(persisted.focusScore);
 		sourceAlgorithm = String(persisted.algorithm || "");
-		if (focusMovieId) {
-			graphMode = "explain";
-		}
+		graphMode = "explain";
 
 		const query = getRouteQueryParams();
 		const queryUserId = parseUserId(query.get("userId"));
@@ -982,11 +983,9 @@
 
 		focusMovieId = parseMovieId(query.get("focusMovieId"));
 		focusRecommendationScore = parseOptionalScore(query.get("focusScore"));
-		graphMode = parseGraphMode(query.get("mode"));
+		graphMode = parseGraphMode();
 		sourceAlgorithm = String(query.get("algorithm") || "");
-		if (focusMovieId && graphMode === "generic") {
-			graphMode = "explain";
-		}
+		graphMode = "explain";
 
 		patchAppState({
 			userInput,
@@ -999,8 +998,11 @@
 
 		window.addEventListener("resize", handleWindowResize);
 
-		if (parseUserId(userInput)) {
+		if (parseUserId(userInput) && focusMovieId) {
 			generateGraph();
+		} else if (parseUserId(userInput) && !focusMovieId) {
+			errorMessage =
+				"Select a recommendation and use 'View in graph' to open the explanation graph.";
 		}
 	});
 
@@ -1032,7 +1034,7 @@
 		focusMovieId = persistedFocusMovieId;
 		focusRecommendationScore = persistedFocusScore;
 		sourceAlgorithm = persistedAlgorithm;
-		graphMode = focusMovieId ? "explain" : "generic";
+		graphMode = "explain";
 
 		if (shouldReload && !loading) {
 			generateGraph();

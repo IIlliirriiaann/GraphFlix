@@ -59,6 +59,11 @@
 		push(`/movie/${movieId}`);
 	};
 
+	const parseMovieId = (value) => {
+		const parsed = Number.parseInt(String(value), 10);
+		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+	};
+
 	const parseUserId = (value) => {
 		const parsed = Number.parseInt(value, 10);
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -222,7 +227,28 @@
 	};
 
 	const openGraphExplorer = () => {
-		push("/graph");
+		const query = new URLSearchParams();
+		if (selectedUserId) {
+			query.set("userId", String(selectedUserId));
+		}
+		const queryString = query.toString();
+		push(queryString ? `/graph?${queryString}` : "/graph");
+	};
+
+	const openMovieInGraph = (movieId) => {
+		const parsedUserId = selectedUserId || parseUserId(userInput);
+		const parsedMovieId = parseMovieId(movieId);
+
+		if (!parsedUserId || !parsedMovieId) {
+			return;
+		}
+
+		const query = new URLSearchParams();
+		query.set("mode", "explain");
+		query.set("userId", String(parsedUserId));
+		query.set("focusMovieId", String(parsedMovieId));
+		query.set("algorithm", selectedAlgorithm);
+		push(`/graph?${query.toString()}`);
 	};
 </script>
 
@@ -541,10 +567,19 @@
 			{:else}
 				<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
 					{#each recommendations as movie}
-						<MovieCard
-							{movie}
-							onClick={() => handleMovieClick(movie.movieId)}
-						/>
+						<div class="space-y-2">
+							<MovieCard
+								{movie}
+								onClick={() => handleMovieClick(movie.movieId)}
+							/>
+							<button
+								type="button"
+								on:click={() => openMovieInGraph(movie.movieId)}
+								class="w-full bg-bg-secondary border border-white/10 rounded-lg px-3 py-2 text-xs text-text-secondary hover:text-text-primary hover:border-accent-primary transition-colors"
+							>
+								View in graph
+							</button>
+						</div>
 					{/each}
 				</div>
 			{/if}

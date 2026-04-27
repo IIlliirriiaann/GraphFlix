@@ -6,7 +6,7 @@
 	import cytoscapeCola from "cytoscape-cola";
 	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
 	import cytoscapeDagre from "cytoscape-dagre";
-	import { getUserGraph } from "../lib/api";
+	import { getRecommendationExplanationGraph, getUserGraph } from "../lib/api";
 
 	cytoscape.use(cytoscapeCola);
 	cytoscape.use(cytoscapeDagre);
@@ -55,6 +55,9 @@
 	let errorMessage = "";
 	let userInput = "1";
 	let currentUserId = null;
+	let focusMovieId = null;
+	let graphMode = "generic";
+	let sourceAlgorithm = "";
 	let depth = 2;
 	let selectedLayout = "cola";
 
@@ -89,6 +92,13 @@
 		return Math.min(3, Math.max(1, parsed));
 	};
 
+	const parseMovieId = (value) => {
+		const parsed = Number.parseInt(String(value), 10);
+		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+	};
+
+	const parseGraphMode = (value) => (value === "explain" ? "explain" : "generic");
+
 	const getNodeType = (type) => {
 		if (type === "Movie" || type === "User" || type === "Genre" || type === "Actor") {
 			return type;
@@ -110,7 +120,10 @@
 			const normalized = Number.isFinite(weight) ? weight / 5 : 0.2;
 			return Math.max(0.2, Math.min(1, normalized));
 		}
+		if (edgeType === "RECOMMENDED") return 0.95;
+		if (edgeType === "SIMILAR_USER") return 0.85;
 		if (edgeType === "ACTED_IN") return 0.45;
+		if (edgeType === "DIRECTED") return 0.4;
 		return 0.35;
 	};
 
@@ -131,10 +144,20 @@
 			const id = String(node.id);
 			const type = getNodeType(node.type);
 			const degree = degreeById[id] || 0;
+			const nodeMovieId = parseMovieId(node.properties?.movieId);
+			const role = String(node.properties?.explanationRole || "");
 			const isRootUser =
 				type === "User" &&
 				rootUserId &&
 				(String(node.properties?.userId) === rootUserId || id === rootUserId);
+			const isFocusMovie =
+				type === "Movie" &&
+				focusMovieId !== null &&
+				nodeMovieId !== null &&
+				nodeMovieId === focusMovieId;
+			const isSupportMovie = type === "Movie" && role === "support_movie";
+			const isBridgeMovie = type === "Movie" && role === "bridge_movie";
+			const isSimilarUser = type === "User" && role === "similar_user";
 			return {
 				group: "nodes",
 				data: {
@@ -142,11 +165,21 @@
 					label: getNodeLabel(node),
 					type,
 					properties: node.properties || {},
+					explanationRole: role,
 					degree,
 					size: Math.min(68, 24 + degree * 4),
 					rootUser: isRootUser,
+					focusMovie: isFocusMovie,
 				},
-				classes: isRootUser ? "root-user" : "",
+				classes: [
+					isRootUser ? "root-user" : "",
+					isFocusMovie ? "focus-movie" : "",
+					isSupportMovie ? "support-movie" : "",
+					isBridgeMovie ? "bridge-movie" : "",
+					isSimilarUser ? "similar-user" : "",
+				]
+					.filter(Boolean)
+					.join(" "),
 			};
 		});
 
@@ -223,6 +256,7 @@
 		const dijkstra = cy.elements().dijkstra({
 			root: node,
 			weight: () => 1,
+			directed: false,
 		});
 		const path = dijkstra.pathTo(rootNode[0]);
 		if (!path || !path.length) return;
@@ -485,11 +519,61 @@
 						style: { "line-color": "#fb923c" },
 					},
 					{
+						selector: 'edge[type = "DIRECTED"]',
+						style: { "line-color": "#e879f9" },
+					},
+					{
+						selector: 'edge[type = "SIMILAR_USER"]',
+						style: {
+							"line-color": "#38bdf8",
+							"line-style": "dashed",
+							width: 2.4,
+						},
+					},
+					{
+						selector: 'edge[type = "RECOMMENDED"]',
+						style: {
+							"line-color": "#f59e0b",
+							"line-style": "dotted",
+							width: 3.1,
+						},
+					},
+					{
 						selector: "node.root-user",
 						style: {
 							"border-color": "#fef08a",
 							"border-width": 3,
 							shape: "star",
+						},
+					},
+					{
+						selector: "node.focus-movie",
+						style: {
+							"border-width": 4,
+							"border-color": "#fbbf24",
+							"background-color": "#8b5cf6",
+						},
+					},
+					{
+						selector: "node.support-movie",
+						style: {
+							"border-width": 2.5,
+							"border-color": "#22c55e",
+						},
+					},
+					{
+						selector: "node.bridge-movie",
+						style: {
+							"border-width": 2.5,
+							"border-color": "#38bdf8",
+						},
+					},
+					{
+						selector: "node.similar-user",
+						style: {
+							shape: "diamond",
+							"border-width": 2.5,
+							"border-color": "#38bdf8",
 						},
 					},
 					{
@@ -557,11 +641,23 @@
 		clearHighlight();
 		applyNodeTypeFilters();
 		runLayout();
+
+		const focusNode = cy.nodes(".focus-movie").first();
+		const hasFocusNode = focusNode.length > 0;
+		if (hasFocusNode) {
+			highlightNeighborhood(focusNode[0]);
+			selectedNode = focusNode.data();
+		}
+
 		graphRendered = true;
 
 		requestAnimationFrame(() => {
 			if (!cy) return;
 			cy.resize();
+			if (hasFocusNode) {
+				cy.fit(focusNode, 160);
+				return;
+			}
 			const visible = cy.elements(":visible");
 			if (visible.length > 0) {
 				cy.fit(visible, 40);
@@ -590,7 +686,10 @@
 		depth = parseDepth(depth);
 
 		try {
-			const response = await getUserGraph(parsedUserId, depth);
+			const shouldExplain = graphMode === "explain" && focusMovieId !== null;
+			const response = shouldExplain
+				? await getRecommendationExplanationGraph(parsedUserId, focusMovieId)
+				: await getUserGraph(parsedUserId, depth);
 			currentUserId = parsedUserId;
 			await initializeGraph(response.data);
 		} catch (error) {
@@ -660,7 +759,40 @@
 		return String(value);
 	};
 
+	const getRouteQueryParams = () => {
+		const searchQuery = window.location.search?.startsWith("?")
+			? window.location.search.slice(1)
+			: "";
+		if (searchQuery) {
+			return new URLSearchParams(searchQuery);
+		}
+
+		const hash = window.location.hash || "";
+		const queryIndex = hash.indexOf("?");
+		if (queryIndex === -1) {
+			return new URLSearchParams();
+		}
+
+		return new URLSearchParams(hash.slice(queryIndex + 1));
+	};
+
 	onMount(() => {
+		const query = getRouteQueryParams();
+		const queryUserId = parseUserId(query.get("userId"));
+		if (queryUserId) {
+			userInput = String(queryUserId);
+		}
+
+		const queryDepth = parseDepth(query.get("depth") ?? depth);
+		depth = queryDepth;
+
+		focusMovieId = parseMovieId(query.get("focusMovieId"));
+		graphMode = parseGraphMode(query.get("mode"));
+		sourceAlgorithm = String(query.get("algorithm") || "");
+		if (focusMovieId && graphMode === "generic") {
+			graphMode = "explain";
+		}
+
 		window.addEventListener("resize", handleWindowResize);
 		generateGraph();
 	});
@@ -682,9 +814,20 @@
 				<h1 class="font-mono text-3xl lg:text-4xl font-semibold uppercase tracking-wide">
 					Graph Explorer
 				</h1>
-				<p class="text-text-secondary text-sm mt-1">
-					Interactive recommendation graph for users, movies, genres, and actors.
-				</p>
+				{#if graphMode === "explain" && focusMovieId}
+					<p class="text-text-secondary text-sm mt-1">
+						Recommendation explanation mode for user {userInput} around movie {focusMovieId}
+						{#if sourceAlgorithm}
+							({sourceAlgorithm}).
+						{:else}
+							.
+						{/if}
+					</p>
+				{:else}
+					<p class="text-text-secondary text-sm mt-1">
+						Interactive recommendation graph for users, movies, genres, and actors.
+					</p>
+				{/if}
 			</div>
 			<div class="inline-flex rounded-xl border border-white/10 bg-bg-secondary/70 p-1">
 				<button
@@ -734,10 +877,15 @@
 							max="3"
 							step="1"
 							bind:value={depth}
+							disabled={graphMode === "explain"}
 							class="w-full accent-accent-primary"
 						/>
 						<p class="text-xs text-text-tertiary mt-2">
-							Higher depth expands the graph but may become denser.
+							{#if graphMode === "explain"}
+								Explanation mode uses a focused graph around the selected recommendation.
+							{:else}
+								Higher depth expands the graph but may become denser.
+							{/if}
 						</p>
 					</div>
 
@@ -832,10 +980,30 @@
 							<span class="inline-block w-3 h-3 rounded-full" style={`background: ${NODE_COLORS.Movie};`}></span>
 							<span>Movie</span>
 						</div>
+						{#if graphMode === "explain"}
+							<div class="flex items-center gap-2">
+								<span class="inline-block w-3 h-3 rounded-full border-2 border-[#fbbf24]" style="background: #8b5cf6;"></span>
+								<span>Focused recommendation</span>
+							</div>
+							<div class="flex items-center gap-2">
+								<span class="inline-block w-3 h-3 rounded-full border-2 border-[#22c55e]" style={`background: ${NODE_COLORS.Movie};`}></span>
+								<span>User liked support movie</span>
+							</div>
+							<div class="flex items-center gap-2">
+								<span class="inline-block w-3 h-3 rounded-full border-2 border-[#38bdf8]" style={`background: ${NODE_COLORS.Movie};`}></span>
+								<span>Bridge movie with similar users</span>
+							</div>
+						{/if}
 						<div class="flex items-center gap-2">
 							<span class="inline-block w-3 h-3 rounded-full" style={`background: ${NODE_COLORS.User};`}></span>
 							<span>User</span>
 						</div>
+						{#if graphMode === "explain"}
+							<div class="flex items-center gap-2">
+								<span class="inline-block w-3 h-3 rotate-45 border border-[#38bdf8]" style={`background: ${NODE_COLORS.User};`}></span>
+								<span>Similar user</span>
+							</div>
+						{/if}
 						<div class="flex items-center gap-2">
 							<span class="inline-block w-3 h-3 rounded-full" style={`background: ${NODE_COLORS.Genre};`}></span>
 							<span>Genre</span>
@@ -844,6 +1012,11 @@
 							<span class="inline-block w-3 h-3 rounded-full" style={`background: ${NODE_COLORS.Actor};`}></span>
 							<span>Actor</span>
 						</div>
+						{#if graphMode === "explain"}
+							<div class="pt-1 text-xs text-text-tertiary">
+								Dashed blue edge: similar user signal • Dotted amber edge: recommendation target
+							</div>
+						{/if}
 					</div>
 				</div>
 

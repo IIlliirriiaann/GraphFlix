@@ -1,6 +1,6 @@
 """Recommendations endpoints"""
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
 from app.services.neo4j_service import neo4j_service
 from app.services.recommendation_service import RecommendationService
 
@@ -18,16 +18,13 @@ class HybridWeights(BaseModel):
     """Weights for hybrid recommendation combining collaborative and content signals."""
     collaborativeWeight: float = Field(0.6, ge=0, le=1)
     contentWeight: float = Field(0.4, ge=0, le=1)
-    
-    @validator('collaborativeWeight', 'contentWeight')
-    def weights_sum(cls, v, values):
-        if 'collaborativeWeight' in values and 'contentWeight' in values:
-            collab = values.get('collaborativeWeight', 0.6)
-            content = values.get('contentWeight', 0.4)
-            total = collab + content
-            if not (0.99 <= total <= 1.01):
-                raise ValueError(f"Weights must sum to 1.0, got {total}")
-        return v
+
+    @model_validator(mode="after")
+    def weights_sum(self):
+        total = self.collaborativeWeight + self.contentWeight
+        if not (0.99 <= total <= 1.01):
+            raise ValueError(f"Weights must sum to 1.0, got {total}")
+        return self
 
 
 class ConfigurableWeights(BaseModel):
@@ -36,21 +33,18 @@ class ConfigurableWeights(BaseModel):
     actorWeight: float = Field(0.15, ge=0, le=1)
     ratingWeight: float = Field(0.45, ge=0, le=1)
     popularityWeight: float = Field(0.15, ge=0, le=1)
-    
-    @validator('genreWeight', 'actorWeight', 'ratingWeight', 'popularityWeight')
-    def weights_sum_to_one(cls, v, values):
-        all_weights = [
-            values.get('genreWeight', 0.25),
-            values.get('actorWeight', 0.15),
-            values.get('ratingWeight', 0.45),
-            values.get('popularityWeight', 0.15)
-        ]
-        # Only validate if all weights are present
-        if len([w for w in all_weights if w is not None]) == 4:
-            total = sum(all_weights)
-            if not (0.99 <= total <= 1.01):
-                raise ValueError(f"All weights must sum to 1.0, got {total}")
-        return v
+
+    @model_validator(mode="after")
+    def weights_sum_to_one(self):
+        total = (
+            self.genreWeight +
+            self.actorWeight +
+            self.ratingWeight +
+            self.popularityWeight
+        )
+        if not (0.99 <= total <= 1.01):
+            raise ValueError(f"All weights must sum to 1.0, got {total}")
+        return self
 
 
 class CustomRecommendationsRequest(BaseModel):

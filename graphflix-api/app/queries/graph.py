@@ -30,7 +30,7 @@ WITH [n IN limitedNodes | {
       WHEN 'Movie' IN labels(n) THEN coalesce(n.title, 'Movie ' + toString(coalesce(n.movieId, elementId(n))))
       WHEN 'Genre' IN labels(n) THEN coalesce(n.name, 'Unknown genre')
       WHEN 'User' IN labels(n) THEN 'User ' + toString(coalesce(n.userId, elementId(n)))
-      ELSE coalesce(n.name, 'Actor ' + elementId(n))
+      ELSE CASE WHEN n.name IS NOT NULL THEN n.name ELSE 'Actor ' + elementId(n) END
     END,
     type: CASE
       WHEN 'Movie' IN labels(n) THEN 'Movie'
@@ -168,7 +168,7 @@ WITH [n IN limitedNodes | {
     WHEN 'Movie' IN labels(n) THEN coalesce(n.title, 'Movie ' + toString(coalesce(n.movieId, elementId(n))))
     WHEN 'Genre' IN labels(n) THEN coalesce(n.name, 'Unknown genre')
     WHEN 'User' IN labels(n) THEN 'User ' + toString(coalesce(n.userId, elementId(n)))
-    ELSE coalesce(n.name, coalesce(n.fullName, 'Actor ' + elementId(n)))
+    ELSE CASE WHEN n.name IS NOT NULL THEN n.name ELSE 'Actor ' + elementId(n) END
   END,
   type: CASE
     WHEN 'Movie' IN labels(n) THEN 'Movie'

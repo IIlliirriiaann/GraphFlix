@@ -222,13 +222,13 @@ WITH target, collaborativeWeight, contentWeight, candidates,
 OPTIONAL MATCH (likedMovie)-[likedActorRel]-(likedActor)
 WHERE type(likedActorRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
 WITH target, collaborativeWeight, contentWeight, candidates, userGenres,
-     COLLECT(DISTINCT coalesce(likedActor.name, likedActor.fullName, toString(id(likedActor)))) AS userActors
+  COLLECT(DISTINCT CASE WHEN likedActor.name IS NOT NULL THEN likedActor.name ELSE toString(elementId(likedActor)) END) AS userActors
 OPTIONAL MATCH (likedMovie)-[likedDirectorRel]-(likedDirector)
 WHERE type(likedDirectorRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
 WITH collaborativeWeight, contentWeight, candidates,
      userGenres,
      userActors,
-     COLLECT(DISTINCT coalesce(likedDirector.name, likedDirector.fullName, toString(id(likedDirector)))) AS userDirectors
+  COLLECT(DISTINCT CASE WHEN likedDirector.name IS NOT NULL THEN likedDirector.name ELSE toString(elementId(likedDirector)) END) AS userDirectors
 
 UNWIND candidates AS candidate
 WITH collaborativeWeight, contentWeight,
@@ -236,46 +236,47 @@ WITH collaborativeWeight, contentWeight,
      userGenres, userActors, userDirectors,
      candidate.rec AS rec
 OPTIONAL MATCH (rec)-[:IN_GENRE]->(recGenre:Genre)
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors,
      COLLECT(DISTINCT recGenre.name) AS recGenres
 OPTIONAL MATCH (rec)-[recActorRel]-(recActor)
 WHERE type(recActorRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors, recGenres,
-     COLLECT(DISTINCT coalesce(recActor.name, recActor.fullName, toString(id(recActor)))) AS recActors
+  COLLECT(DISTINCT CASE WHEN recActor.name IS NOT NULL THEN recActor.name ELSE toString(elementId(recActor)) END) AS recActors
 OPTIONAL MATCH (rec)-[recDirectorRel]-(recDirector)
 WHERE type(recDirectorRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
-WITH collaborativeWeight, contentWeight, candidate,
+WITH collaborativeWeight, contentWeight, candidate, rec,
      userGenres, userActors, userDirectors,
      recGenres, recActors,
-     COLLECT(DISTINCT coalesce(recDirector.name, recDirector.fullName, toString(id(recDirector)))) AS recDirectors
+  COLLECT(DISTINCT CASE WHEN recDirector.name IS NOT NULL THEN recDirector.name ELSE toString(elementId(recDirector)) END) AS recDirectors
 
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      [g IN userGenres WHERE g IN recGenres] AS matchedGenres,
      [a IN userActors WHERE a IN recActors] AS matchedActors,
      [d IN userDirectors WHERE d IN recDirectors] AS matchedDirectors,
      (SIZE(userGenres) + SIZE(recGenres) - SIZE([g IN userGenres WHERE g IN recGenres])) AS genreUnion,
      (SIZE(userActors) + SIZE(recActors) - SIZE([a IN userActors WHERE a IN recActors])) AS actorUnion,
      (SIZE(userDirectors) + SIZE(recDirectors) - SIZE([d IN userDirectors WHERE d IN recDirectors])) AS directorUnion
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      CASE WHEN genreUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedGenres)) / toFloat(genreUnion) END AS genreJaccard,
      CASE WHEN actorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedActors)) / toFloat(actorUnion) END AS actorJaccard,
      CASE WHEN directorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedDirectors)) / toFloat(directorUnion) END AS directorJaccard
 
-OPTIONAL MATCH (candidate.rec)<-[allRatings:RATED]-()
-WITH collaborativeWeight, contentWeight, candidate, recGenres,
+OPTIONAL MATCH (rec)<-[allRatings:RATED]-()
+WITH collaborativeWeight, contentWeight, candidate, rec, recGenres,
      (0.6 * genreJaccard + 0.3 * actorJaccard + 0.1 * directorJaccard) AS contentRaw,
      avg(toFloat(allRatings.rating)) AS avgRating,
      count(allRatings) AS numRatings
 WITH collaborativeWeight, contentWeight,
      candidate,
+     rec,
      recGenres,
      contentRaw,
      candidate.collaborativeRaw AS collaborativeRaw,
      coalesce(avgRating, 0.0) AS avgRating,
      toFloat(coalesce(numRatings, 0)) AS numRatings,
-     coalesce(toFloat(candidate.rec.year), toFloat(candidate.rec.releaseYear), 0.0) AS releaseYear
+     coalesce(toFloat(rec.year), toFloat(rec.releaseYear), 0.0) AS releaseYear
 
 WITH COLLECT({
     movieId: candidate.movieId,
@@ -425,6 +426,16 @@ WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
      other,
      toFloat(commonCount) / toFloat(unionCount) AS jaccardSimilarity
 WHERE jaccardSimilarity > 0.1
+WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
+     other,
+     jaccardSimilarity
+ORDER BY jaccardSimilarity DESC
+WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
+     COLLECT({other: other, similarity: jaccardSimilarity})[..150] AS topNeighbors
+UNWIND topNeighbors AS topNeighbor
+WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
+     topNeighbor.other AS other,
+     topNeighbor.similarity AS jaccardSimilarity
 
 MATCH (target)-[rTarget:RATED]->(cm:Movie)<-[rOther:RATED]-(other)
 WHERE abs(toFloat(rTarget.rating) - toFloat(rOther.rating)) <= 1.0
@@ -442,55 +453,66 @@ WHERE similaritySum > 0
 WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
      rec,
      (weightedRatingSum / similaritySum) AS predictedRating
+ORDER BY predictedRating DESC
+WITH target, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    COLLECT({
+     rec: rec,
+     movieId: rec.movieId,
+     title: rec.title,
+     predictedRating: predictedRating
+  })[..(toInteger($limit) * 4)] AS candidates
 
 MATCH (target)-[liked:RATED]->(likedMovie:Movie)
 WHERE toFloat(liked.rating) >= 4.0
 OPTIONAL MATCH (likedMovie)-[:IN_GENRE]->(likedGenre:Genre)
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     COLLECT(DISTINCT likedGenre.name) AS userGenres
+WITH candidates, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    COLLECT(DISTINCT likedGenre.name) AS userGenres
 OPTIONAL MATCH (likedMovie)-[likedActorRel]-(likedActor)
 WHERE type(likedActorRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     userGenres,
-     COLLECT(DISTINCT coalesce(likedActor.name, likedActor.fullName, toString(id(likedActor)))) AS userActors
+WITH candidates, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    userGenres,
+    COLLECT(DISTINCT CASE WHEN likedActor.name IS NOT NULL THEN likedActor.name ELSE toString(elementId(likedActor)) END) AS userActors
 
+UNWIND candidates AS candidate
+WITH candidate, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    userGenres, userActors, candidate.rec AS rec
 OPTIONAL MATCH (rec)-[:IN_GENRE]->(recGenre:Genre)
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     userGenres, userActors,
-     COLLECT(DISTINCT recGenre.name) AS recGenres
+WITH candidate, rec, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    userGenres, userActors,
+    COLLECT(DISTINCT recGenre.name) AS recGenres
 OPTIONAL MATCH (rec)-[recActorRel]-(recActor)
 WHERE type(recActorRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     userGenres, userActors, recGenres,
-     COLLECT(DISTINCT coalesce(recActor.name, recActor.fullName, toString(id(recActor)))) AS recActors
+WITH candidate, rec, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    userGenres, userActors, recGenres,
+    COLLECT(DISTINCT CASE WHEN recActor.name IS NOT NULL THEN recActor.name ELSE toString(elementId(recActor)) END) AS recActors
 
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     [g IN userGenres WHERE g IN recGenres] AS matchedGenres,
-     [a IN userActors WHERE a IN recActors] AS matchedActors,
-     (SIZE(userGenres) + SIZE(recGenres) - SIZE([g IN userGenres WHERE g IN recGenres])) AS genreUnion,
-     (SIZE(userActors) + SIZE(recActors) - SIZE([a IN userActors WHERE a IN recActors])) AS actorUnion
-WITH rec, predictedRating, genreWeight, actorWeight, ratingWeight, popularityWeight,
-     CASE WHEN genreUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedGenres)) / toFloat(genreUnion) END AS genreScore,
-     CASE WHEN actorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedActors)) / toFloat(actorUnion) END AS actorScore
+WITH candidate, rec, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    [g IN userGenres WHERE g IN recGenres] AS matchedGenres,
+    [a IN userActors WHERE a IN recActors] AS matchedActors,
+    (SIZE(userGenres) + SIZE(recGenres) - SIZE([g IN userGenres WHERE g IN recGenres])) AS genreUnion,
+    (SIZE(userActors) + SIZE(recActors) - SIZE([a IN userActors WHERE a IN recActors])) AS actorUnion
+WITH candidate, rec, genreWeight, actorWeight, ratingWeight, popularityWeight,
+    CASE WHEN genreUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedGenres)) / toFloat(genreUnion) END AS genreScore,
+    CASE WHEN actorUnion = 0 THEN 0.0 ELSE toFloat(SIZE(matchedActors)) / toFloat(actorUnion) END AS actorScore
 
 OPTIONAL MATCH (rec)<-[allRatings:RATED]-()
-WITH rec, predictedRating, genreScore, actorScore,
-     genreWeight, actorWeight, ratingWeight, popularityWeight,
-     avg(toFloat(allRatings.rating)) AS avgRating,
-     count(allRatings) AS numRatings
-WITH rec,
-     genreScore,
-     actorScore,
-     (predictedRating - 0.5) / 4.5 AS ratingScore,
-     (coalesce(avgRating, 0.0) / 5.0) * (1.0 - exp(-toFloat(coalesce(numRatings, 0)) / 50.0)) AS popularityRaw,
-     genreWeight,
-     actorWeight,
-     ratingWeight,
-     popularityWeight
+WITH candidate, rec, genreScore, actorScore,
+    genreWeight, actorWeight, ratingWeight, popularityWeight,
+    avg(toFloat(allRatings.rating)) AS avgRating,
+    count(allRatings) AS numRatings
+WITH candidate,
+    genreScore,
+    actorScore,
+    (candidate.predictedRating - 0.5) / 4.5 AS ratingScore,
+    (coalesce(avgRating, 0.0) / 5.0) * (1.0 - exp(-toFloat(coalesce(numRatings, 0)) / 50.0)) AS popularityRaw,
+    genreWeight,
+    actorWeight,
+    ratingWeight,
+    popularityWeight
 
 WITH COLLECT({
-   movieId: rec.movieId,
-   title: rec.title,
+  movieId: candidate.movieId,
+  title: candidate.title,
    genreScore: genreScore,
    actorScore: actorScore,
    ratingScore: ratingScore,

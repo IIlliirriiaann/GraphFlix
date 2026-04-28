@@ -7,7 +7,7 @@
 	import cytoscapeCola from "cytoscape-cola";
 	// @ts-ignore - Module is available at runtime but has no bundled type declarations.
 	import cytoscapeDagre from "cytoscape-dagre";
-	import { getRecommendationExplanationGraph, getUserGraph } from "../lib/api";
+	import { getRecommendationExplanationGraph } from "../lib/api";
 	import { appStateStore, patchAppState } from "../lib/stores/appState";
 
 	export let embedded = false;
@@ -67,12 +67,13 @@
 	let cyContainer;
 
 	let loading = false;
-	let errorMessage = "";
+	let messageText = "";
+	let messageType = "error";
 	let userInput = "";
 	let currentUserId = null;
 	let focusMovieId = null;
 	let focusRecommendationScore = null;
-	let graphMode = "generic";
+	let graphMode = "explain";
 	let sourceAlgorithm = "";
 	let depth = 2;
 	let selectedLayout = "cola";
@@ -117,12 +118,17 @@
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 	};
 
-	const parseGraphMode = (value) => (value === "explain" ? "explain" : "generic");
+	const parseGraphMode = () => "explain";
 
 	const parseOptionalScore = (value) => {
 		if (value === null || value === undefined || value === "") return null;
 		const parsed = Number.parseFloat(String(value));
 		return Number.isFinite(parsed) ? parsed : null;
+	};
+
+	const displayMessage = (text, type = "error") => {
+		messageText = text;
+		messageType = type;
 	};
 
 	const formatMetricNumber = (value, decimals = 2) => {
@@ -608,7 +614,7 @@
 	const initializeGraph = async (graphData) => {
 		const containerReady = await ensureContainerReady();
 		if (!containerReady) {
-			errorMessage = "Graph container is not ready yet. Please click Generate again.";
+			displayMessage("Graph container is not ready yet. Please click Generate again.", "error");
 			graphRendered = false;
 			return;
 		}
@@ -847,21 +853,27 @@
 	const generateGraph = async () => {
 		const parsedUserId = parseUserId(userInput);
 		if (!parsedUserId) {
-			errorMessage = "Please enter a valid positive user ID.";
+			displayMessage("Please enter a valid positive user ID.", "error");
+			graphRendered = false;
+			return;
+		}
+
+		if (!focusMovieId) {
+			displayMessage(
+				"No focused recommendation selected. Use 'View in graph' from a recommendation card.",
+				"info"
+			);
 			graphRendered = false;
 			return;
 		}
 
 		loading = true;
-		errorMessage = "";
+		messageText = "";
 		graphRendered = false;
 		depth = parseDepth(depth);
 
 		try {
-			const shouldExplain = graphMode === "explain" && focusMovieId !== null;
-			const response = shouldExplain
-				? await getRecommendationExplanationGraph(parsedUserId, focusMovieId)
-				: await getUserGraph(parsedUserId, depth);
+			const response = await getRecommendationExplanationGraph(parsedUserId, focusMovieId);
 			currentUserId = parsedUserId;
 			patchAppState({
 				userInput: String(parsedUserId),
@@ -874,11 +886,12 @@
 			await initializeGraph(response.data);
 		} catch (error) {
 			if (error?.response?.status === 404) {
-				errorMessage = `User ${parsedUserId} not found.`;
-			} else if (error?.response?.status === 422) {
-				errorMessage = "Depth must be between 1 and 3.";
+				displayMessage(
+					"No explanation graph found for this recommendation. Try another movie from the list.",
+					"error"
+				);
 			} else {
-				errorMessage = "Unable to load graph data right now.";
+				displayMessage("Unable to load recommendation explanation right now.", "error");
 			}
 			console.error("Graph loading error:", error);
 		} finally {
@@ -967,9 +980,7 @@
 		focusMovieId = parseMovieId(persisted.focusMovieId);
 		focusRecommendationScore = parseOptionalScore(persisted.focusScore);
 		sourceAlgorithm = String(persisted.algorithm || "");
-		if (focusMovieId) {
-			graphMode = "explain";
-		}
+		graphMode = "explain";
 
 		const query = getRouteQueryParams();
 		const queryUserId = parseUserId(query.get("userId"));
@@ -982,11 +993,9 @@
 
 		focusMovieId = parseMovieId(query.get("focusMovieId"));
 		focusRecommendationScore = parseOptionalScore(query.get("focusScore"));
-		graphMode = parseGraphMode(query.get("mode"));
+		graphMode = parseGraphMode();
 		sourceAlgorithm = String(query.get("algorithm") || "");
-		if (focusMovieId && graphMode === "generic") {
-			graphMode = "explain";
-		}
+		graphMode = "explain";
 
 		patchAppState({
 			userInput,
@@ -999,8 +1008,13 @@
 
 		window.addEventListener("resize", handleWindowResize);
 
-		if (parseUserId(userInput)) {
+		if (parseUserId(userInput) && focusMovieId) {
 			generateGraph();
+		} else if (parseUserId(userInput) && !focusMovieId) {
+			displayMessage(
+				"Select a recommendation and use 'View in graph' to open the explanation graph.",
+				"info"
+			);
 		}
 	});
 
@@ -1032,7 +1046,7 @@
 		focusMovieId = persistedFocusMovieId;
 		focusRecommendationScore = persistedFocusScore;
 		sourceAlgorithm = persistedAlgorithm;
-		graphMode = focusMovieId ? "explain" : "generic";
+		graphMode = "explain";
 
 		if (shouldReload && !loading) {
 			generateGraph();
@@ -1205,12 +1219,14 @@
 						{#if loading}Generating...{:else}Generate{/if}
 					</button>
 
-					{#if errorMessage}
-						<p class="text-sm text-red-400">{errorMessage}</p>
-					{/if}
-				</form>
+				{#if messageText}
+					<p class={`text-sm ${messageType === "error" ? "text-red-400" : "text-sky-400"}`}>
+						{messageText}
+					</p>
+				{/if}
+		</form>
 
-				<div class="border-t border-white/10 mt-4 pt-4">
+		<div class="border-t border-white/10 mt-4 pt-4">
 					<p class="text-sm text-text-secondary mb-3">Legend</p>
 					<div class="space-y-2 text-sm">
 						<div class="flex items-center gap-2">
@@ -1354,7 +1370,7 @@
 					</div>
 				{/if}
 
-				{#if !loading && !errorMessage && !graphRendered}
+				{#if !loading && !messageText && !graphRendered}
 					<div class="absolute inset-0 z-10 flex items-center justify-center text-sm text-text-secondary">
 						Graph not rendered yet. Click Generate to draw the network.
 					</div>

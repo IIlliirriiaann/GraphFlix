@@ -38,11 +38,11 @@ WITH m, COLLECT(DISTINCT g.name) AS targetGenres
 OPTIONAL MATCH (m)-[ma]-(a)
 WHERE type(ma) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
 WITH m, targetGenres,
-     COLLECT(DISTINCT coalesce(a.name, a.fullName, toString(id(a)))) AS targetActors
+  COLLECT(DISTINCT CASE WHEN a.name IS NOT NULL THEN a.name ELSE toString(elementId(a)) END) AS targetActors
 OPTIONAL MATCH (m)-[md]-(d)
 WHERE type(md) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
 WITH m, targetGenres, targetActors,
-     COLLECT(DISTINCT coalesce(d.name, d.fullName, toString(id(d)))) AS targetDirectors
+  COLLECT(DISTINCT CASE WHEN d.name IS NOT NULL THEN d.name ELSE toString(elementId(d)) END) AS targetDirectors
 
 MATCH (similar:Movie)
 WHERE similar <> m
@@ -52,12 +52,12 @@ WITH similar, targetGenres, targetActors, targetDirectors,
 OPTIONAL MATCH (similar)-[saRel]-(sa)
 WHERE type(saRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
 WITH similar, targetGenres, targetActors, targetDirectors, similarGenres,
-     COLLECT(DISTINCT coalesce(sa.name, sa.fullName, toString(id(sa)))) AS similarActors
+  COLLECT(DISTINCT CASE WHEN sa.name IS NOT NULL THEN sa.name ELSE toString(elementId(sa)) END) AS similarActors
 OPTIONAL MATCH (similar)-[sdRel]-(sd)
 WHERE type(sdRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
 WITH similar, targetGenres, targetActors, targetDirectors,
      similarGenres, similarActors,
-     COLLECT(DISTINCT coalesce(sd.name, sd.fullName, toString(id(sd)))) AS similarDirectors
+  COLLECT(DISTINCT CASE WHEN sd.name IS NOT NULL THEN sd.name ELSE toString(elementId(sd)) END) AS similarDirectors
 
 WITH similar,
      [gName IN targetGenres WHERE gName IN similarGenres] AS matchedGenres,
@@ -157,12 +157,12 @@ UNWIND likedMovies AS likedForActors
 OPTIONAL MATCH (likedForActors)-[laRel]-(la)
 WHERE type(laRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
 WITH u, likedMovies, profileGenres,
-     COLLECT(DISTINCT coalesce(la.name, la.fullName, toString(id(la)))) AS profileActors
+  COLLECT(DISTINCT CASE WHEN la.name IS NOT NULL THEN la.name ELSE toString(elementId(la)) END) AS profileActors
 UNWIND likedMovies AS likedForDirectors
 OPTIONAL MATCH (likedForDirectors)-[ldRel]-(ld)
 WHERE type(ldRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
 WITH u, profileGenres, profileActors,
-     COLLECT(DISTINCT coalesce(ld.name, ld.fullName, toString(id(ld)))) AS profileDirectors
+  COLLECT(DISTINCT CASE WHEN ld.name IS NOT NULL THEN ld.name ELSE toString(elementId(ld)) END) AS profileDirectors
 
 MATCH (rec:Movie)
 WHERE NOT EXISTS((u)-[:RATED]->(rec))
@@ -172,11 +172,11 @@ WITH rec, profileGenres, profileActors, profileDirectors,
 OPTIONAL MATCH (rec)-[raRel]-(ra)
 WHERE type(raRel) IN ['ACTED_IN', 'HAS_ACTOR', 'FEATURES_ACTOR']
 WITH rec, profileGenres, profileActors, profileDirectors, recGenres,
-     COLLECT(DISTINCT coalesce(ra.name, ra.fullName, toString(id(ra)))) AS recActors
+  COLLECT(DISTINCT CASE WHEN ra.name IS NOT NULL THEN ra.name ELSE toString(elementId(ra)) END) AS recActors
 OPTIONAL MATCH (rec)-[rdRel]-(rd)
 WHERE type(rdRel) IN ['DIRECTED', 'DIRECTED_BY', 'HAS_DIRECTOR']
 WITH rec, profileGenres, profileActors, profileDirectors, recGenres, recActors,
-     COLLECT(DISTINCT coalesce(rd.name, rd.fullName, toString(id(rd)))) AS recDirectors
+  COLLECT(DISTINCT CASE WHEN rd.name IS NOT NULL THEN rd.name ELSE toString(elementId(rd)) END) AS recDirectors
 
 WITH rec,
      [genreName IN profileGenres WHERE genreName IN recGenres] AS matchedGenres,

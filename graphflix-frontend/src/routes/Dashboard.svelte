@@ -50,6 +50,92 @@
 		balanced: { genre: 0.25, actor: 0.25, rating: 0.25, popularity: 0.25 },
 	};
 
+	const normalizeConfigurableWeights = (weights) => {
+		const safeWeights = {
+			genre: clampWeight(weights.genre),
+			actor: clampWeight(weights.actor),
+			rating: clampWeight(weights.rating),
+			popularity: clampWeight(weights.popularity),
+		};
+
+		const total =
+			safeWeights.genre + safeWeights.actor + safeWeights.rating + safeWeights.popularity;
+
+		if (total <= 0) {
+			return { ...CONFIGURABLE_PRESETS.balanced };
+		}
+
+		const normalized = {
+			genre: Number((safeWeights.genre / total).toFixed(2)),
+			actor: Number((safeWeights.actor / total).toFixed(2)),
+			rating: Number((safeWeights.rating / total).toFixed(2)),
+			popularity: Number((safeWeights.popularity / total).toFixed(2)),
+		};
+
+		const roundedTotal = Number(
+			(
+				normalized.genre +
+				normalized.actor +
+				normalized.rating +
+				normalized.popularity
+			).toFixed(2),
+		);
+		const drift = Number((1 - roundedTotal).toFixed(2));
+		normalized.popularity = clampWeight(normalized.popularity + drift);
+
+		return normalized;
+	};
+
+	const rebalanceConfigurableWeights = (weights, changedKey, nextValue) => {
+		const nextWeights = {
+			genre: clampWeight(weights.genre),
+			actor: clampWeight(weights.actor),
+			rating: clampWeight(weights.rating),
+			popularity: clampWeight(weights.popularity),
+		};
+		const clampedNextValue = clampWeight(nextValue);
+		const previousValue = nextWeights[changedKey];
+		nextWeights[changedKey] = clampedNextValue;
+
+		const delta = Number((clampedNextValue - previousValue).toFixed(2));
+		if (delta === 0) {
+			return normalizeConfigurableWeights(nextWeights);
+		}
+
+		const otherKeys = ["genre", "actor", "rating", "popularity"].filter(
+			(key) => key !== changedKey,
+		);
+		const largestKey = otherKeys.reduce((largest, key) => {
+			if (nextWeights[key] > nextWeights[largest]) {
+				return key;
+			}
+			return largest;
+		}, otherKeys[0]);
+
+		nextWeights[largestKey] = clampWeight(nextWeights[largestKey] - delta);
+
+		return normalizeConfigurableWeights(nextWeights);
+	};
+
+	const setConfigurableWeights = (weights) => {
+		genreWeight = weights.genre;
+		actorWeight = weights.actor;
+		ratingWeight = weights.rating;
+		popularityWeight = weights.popularity;
+	};
+
+	const getApiErrorDetail = (error) => {
+		const detail = error?.response?.data?.detail;
+		if (typeof detail === "string" && detail.trim()) return detail;
+		if (Array.isArray(detail) && detail.length > 0) {
+			const first = detail[0];
+			if (typeof first?.msg === "string" && first.msg.trim()) {
+				return first.msg;
+			}
+		}
+		return null;
+	};
+
 	onMount(() => {
 		const persisted = get(appStateStore);
 		userInput = persisted.userInput || "";
@@ -64,8 +150,15 @@
 		actorWeight = clampWeight(persisted.actorWeight ?? actorWeight);
 		ratingWeight = clampWeight(persisted.ratingWeight ?? ratingWeight);
 		popularityWeight = clampWeight(persisted.popularityWeight ?? popularityWeight);
+		setConfigurableWeights(
+			normalizeConfigurableWeights({
+				genre: genreWeight,
+				actor: actorWeight,
+				rating: ratingWeight,
+				popularity: popularityWeight,
+			}),
+		);
 		configurablePreset = persisted.configurablePreset || configurablePreset;
-
 		const isGraphPath = window.location.pathname === "/graph" || window.location.hash.startsWith("#/graph");
 		activeSection = isGraphPath ? "graph" : persisted.activeSection || "recommendations";
 		showGraphSection = activeSection === "graph";
@@ -166,11 +259,17 @@
 	};
 
 	const updateConfigurableWeight = (which, value) => {
-		const clamped = clampWeight(value);
-		if (which === "genre") genreWeight = clamped;
-		if (which === "actor") actorWeight = clamped;
-		if (which === "rating") ratingWeight = clamped;
-		if (which === "popularity") popularityWeight = clamped;
+		const redistributed = rebalanceConfigurableWeights(
+			{
+				genre: genreWeight,
+				actor: actorWeight,
+				rating: ratingWeight,
+				popularity: popularityWeight,
+			},
+			which,
+			value,
+		);
+		setConfigurableWeights(redistributed);
 		syncConfigurableWeights();
 	};
 
@@ -187,10 +286,7 @@
 		configurablePreset = presetKey;
 		const preset = CONFIGURABLE_PRESETS[presetKey];
 		if (!preset) return;
-		genreWeight = preset.genre;
-		actorWeight = preset.actor;
-		ratingWeight = preset.rating;
-		popularityWeight = preset.popularity;
+		setConfigurableWeights(normalizeConfigurableWeights(preset));
 		triggerAutoReload();
 	};
 
@@ -245,12 +341,19 @@
 				);
 			} else if (selectedAlgorithm === "configurable") {
 				// Configurable with 4 weights
+				const normalizedWeights = normalizeConfigurableWeights({
+					genre: genreWeight,
+					actor: actorWeight,
+					rating: ratingWeight,
+					popularity: popularityWeight,
+				});
+				setConfigurableWeights(normalizedWeights);
 				recRes = await getConfigurableRecommendations(
 					userId,
-					genreWeight,
-					actorWeight,
-					ratingWeight,
-					popularityWeight,
+					normalizedWeights.genre,
+					normalizedWeights.actor,
+					normalizedWeights.rating,
+					normalizedWeights.popularity,
 					parsedLimit,
 				);
 			}
@@ -276,7 +379,8 @@
 			if (error?.response?.status === 404) {
 				errorMessage = `User ${userId} not found.`;
 			} else if (error?.response?.status === 400 || error?.response?.status === 422) {
-				errorMessage = "Invalid parameters. Please check your weights.";
+				errorMessage =
+					getApiErrorDetail(error) || "Invalid parameters. Please check your weights.";
 			} else {
 				errorMessage = "Unable to load recommendations right now.";
 			}
@@ -648,7 +752,6 @@
 				{/if}
 			</div>
 		</div>
-
 		<section class:hidden={activeSection !== "recommendations"}>
 			<!-- Stats Card -->
 			{#if stats}

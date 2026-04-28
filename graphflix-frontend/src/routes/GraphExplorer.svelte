@@ -67,7 +67,8 @@
 	let cyContainer;
 
 	let loading = false;
-	let errorMessage = "";
+	let messageText = "";
+	let messageType = "error";
 	let userInput = "";
 	let currentUserId = null;
 	let focusMovieId = null;
@@ -123,6 +124,11 @@
 		if (value === null || value === undefined || value === "") return null;
 		const parsed = Number.parseFloat(String(value));
 		return Number.isFinite(parsed) ? parsed : null;
+	};
+
+	const displayMessage = (text, type = "error") => {
+		messageText = text;
+		messageType = type;
 	};
 
 	const formatMetricNumber = (value, decimals = 2) => {
@@ -608,7 +614,7 @@
 	const initializeGraph = async (graphData) => {
 		const containerReady = await ensureContainerReady();
 		if (!containerReady) {
-			errorMessage = "Graph container is not ready yet. Please click Generate again.";
+			displayMessage("Graph container is not ready yet. Please click Generate again.", "error");
 			graphRendered = false;
 			return;
 		}
@@ -847,20 +853,22 @@
 	const generateGraph = async () => {
 		const parsedUserId = parseUserId(userInput);
 		if (!parsedUserId) {
-			errorMessage = "Please enter a valid positive user ID.";
+			displayMessage("Please enter a valid positive user ID.", "error");
 			graphRendered = false;
 			return;
 		}
 
 		if (!focusMovieId) {
-			errorMessage =
-				"No focused recommendation selected. Use 'View in graph' from a recommendation card.";
+			displayMessage(
+				"No focused recommendation selected. Use 'View in graph' from a recommendation card.",
+				"info"
+			);
 			graphRendered = false;
 			return;
 		}
 
 		loading = true;
-		errorMessage = "";
+		messageText = "";
 		graphRendered = false;
 		depth = parseDepth(depth);
 
@@ -878,10 +886,12 @@
 			await initializeGraph(response.data);
 		} catch (error) {
 			if (error?.response?.status === 404) {
-				errorMessage =
-					"No explanation graph found for this recommendation. Try another movie from the list.";
+				displayMessage(
+					"No explanation graph found for this recommendation. Try another movie from the list.",
+					"error"
+				);
 			} else {
-				errorMessage = "Unable to load recommendation explanation right now.";
+				displayMessage("Unable to load recommendation explanation right now.", "error");
 			}
 			console.error("Graph loading error:", error);
 		} finally {
@@ -1001,8 +1011,10 @@
 		if (parseUserId(userInput) && focusMovieId) {
 			generateGraph();
 		} else if (parseUserId(userInput) && !focusMovieId) {
-			errorMessage =
-				"Select a recommendation and use 'View in graph' to open the explanation graph.";
+			displayMessage(
+				"Select a recommendation and use 'View in graph' to open the explanation graph.",
+				"info"
+			);
 		}
 	});
 
@@ -1207,12 +1219,14 @@
 						{#if loading}Generating...{:else}Generate{/if}
 					</button>
 
-					{#if errorMessage}
-						<p class="text-sm text-red-400">{errorMessage}</p>
-					{/if}
-				</form>
+				{#if messageText}
+					<p class={`text-sm ${messageType === "error" ? "text-red-400" : "text-sky-400"}`}>
+						{messageText}
+					</p>
+				{/if}
+		</form>
 
-				<div class="border-t border-white/10 mt-4 pt-4">
+		<div class="border-t border-white/10 mt-4 pt-4">
 					<p class="text-sm text-text-secondary mb-3">Legend</p>
 					<div class="space-y-2 text-sm">
 						<div class="flex items-center gap-2">
@@ -1356,7 +1370,7 @@
 					</div>
 				{/if}
 
-				{#if !loading && !errorMessage && !graphRendered}
+				{#if !loading && !messageText && !graphRendered}
 					<div class="absolute inset-0 z-10 flex items-center justify-center text-sm text-text-secondary">
 						Graph not rendered yet. Click Generate to draw the network.
 					</div>

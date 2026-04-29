@@ -75,16 +75,11 @@
 	let focusRecommendationScore = null;
 	let graphMode = "explain";
 	let sourceAlgorithm = "";
-	let depth = 2;
 	let selectedLayout = "cola";
 
 	let selectedNode = null;
 	let graphStats = { nodeCount: 0, edgeCount: 0 };
 	let graphRendered = false;
-
-	let showMovies = true;
-	let showGenres = true;
-	let showActors = true;
 
 	let tooltip = {
 		visible: false,
@@ -105,12 +100,6 @@
 	const parseUserId = (value) => {
 		const parsed = Number.parseInt(value, 10);
 		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-	};
-
-	const parseDepth = (value) => {
-		const parsed = Number.parseInt(String(value), 10);
-		if (!Number.isInteger(parsed)) return 2;
-		return Math.min(3, Math.max(1, parsed));
 	};
 
 	const parseMovieId = (value) => {
@@ -386,27 +375,6 @@
 		};
 	};
 
-	const getNodeVisibility = (type) => {
-		if (type === "Movie") return showMovies;
-		if (type === "Genre") return showGenres;
-		if (type === "Actor") return showActors;
-		return true;
-	};
-
-	const applyNodeTypeFilters = () => {
-		if (!cy) return;
-
-		cy.nodes().forEach((node) => {
-			const hidden = !getNodeVisibility(node.data("type"));
-			node.toggleClass("hidden-type", hidden);
-		});
-
-		cy.edges().forEach((edge) => {
-			const hidden = edge.source().hasClass("hidden-type") || edge.target().hasClass("hidden-type");
-			edge.toggleClass("hidden-type", hidden);
-		});
-	};
-
 	const clearHighlight = () => {
 		if (!cy) return;
 		cy.elements().removeClass("faded focused selected path-highlight");
@@ -612,14 +580,14 @@
 	};
 
 	const initializeGraph = async (graphData) => {
-		const containerReady = await ensureContainerReady();
-		if (!containerReady) {
-			displayMessage("Graph container is not ready yet. Please click Generate again.", "error");
-			graphRendered = false;
-			return;
-		}
+			const containerReady = await ensureContainerReady();
+			if (!containerReady) {
+				displayMessage("Graph container is not ready yet. Please try again.", "error");
+				graphRendered = false;
+				return;
+			}
 
-		const elements = mapGraphToElements(graphData);
+			const elements = mapGraphToElements(graphData);
 
 		if (!cy) {
 			cy = cytoscape({
@@ -816,8 +784,7 @@
 		cy.resize();
 		selectedNode = null;
 		tooltip = { ...tooltip, visible: false };
-		clearHighlight();
-		applyNodeTypeFilters();
+			clearHighlight();
 		runLayout();
 
 		const focusNode = cy.nodes(".focus-movie").first();
@@ -870,15 +837,12 @@
 		loading = true;
 		messageText = "";
 		graphRendered = false;
-		depth = parseDepth(depth);
-
 		try {
 			const response = await getRecommendationExplanationGraph(parsedUserId, focusMovieId);
 			currentUserId = parsedUserId;
 			patchAppState({
 				userInput: String(parsedUserId),
 				selectedUserId: parsedUserId,
-				depth,
 				focusMovieId,
 				focusScore: focusRecommendationScore,
 				algorithm: sourceAlgorithm,
@@ -976,7 +940,6 @@
 		} else if (persisted.userInput) {
 			userInput = String(persisted.userInput);
 		}
-		depth = parseDepth(persisted.depth ?? depth);
 		focusMovieId = parseMovieId(persisted.focusMovieId);
 		focusRecommendationScore = parseOptionalScore(persisted.focusScore);
 		sourceAlgorithm = String(persisted.algorithm || "");
@@ -988,9 +951,6 @@
 			userInput = String(queryUserId);
 		}
 
-		const queryDepth = parseDepth(query.get("depth") ?? depth);
-		depth = queryDepth;
-
 		focusMovieId = parseMovieId(query.get("focusMovieId"));
 		focusRecommendationScore = parseOptionalScore(query.get("focusScore"));
 		graphMode = parseGraphMode();
@@ -1000,7 +960,6 @@
 		patchAppState({
 			userInput,
 			selectedUserId: parseUserId(userInput),
-			depth,
 			focusMovieId,
 			focusScore: focusRecommendationScore,
 			algorithm: sourceAlgorithm,
@@ -1023,13 +982,8 @@
 		destroyGraph();
 	});
 
-	$: if (cy) {
-		applyNodeTypeFilters();
-	}
-
 	$: if (embedded && $appStateStore.activeSection === "graph") {
 		const persistedUserId = parseUserId($appStateStore.selectedUserId || $appStateStore.userInput);
-		const persistedDepth = parseDepth($appStateStore.depth ?? depth);
 		const persistedFocusMovieId = parseMovieId($appStateStore.focusMovieId);
 		const persistedFocusScore = parseOptionalScore($appStateStore.focusScore);
 		const persistedAlgorithm = String($appStateStore.algorithm || "");
@@ -1038,11 +992,9 @@
 			persistedUserId &&
 			(!graphRendered ||
 				persistedUserId !== currentUserId ||
-				persistedDepth !== depth ||
 				persistedFocusMovieId !== focusMovieId);
 
 		userInput = persistedUserId ? String(persistedUserId) : userInput;
-		depth = persistedDepth;
 		focusMovieId = persistedFocusMovieId;
 		focusRecommendationScore = persistedFocusScore;
 		sourceAlgorithm = persistedAlgorithm;
@@ -1073,7 +1025,7 @@
 						</p>
 					{:else}
 						<p class="text-text-secondary text-sm mt-1">
-							Interactive recommendation graph for users, movies, genres, and actors.
+							Select a recommendation to view its explanation graph.
 						</p>
 					{/if}
 				</div>
@@ -1100,63 +1052,21 @@
 			embedded ? "" : "h-[calc(100vh-9rem)]"
 		}`}>
 			<aside class="bg-bg-secondary/80 border border-white/10 rounded-xl p-4 lg:p-5 overflow-y-auto backdrop-blur">
-				<form
-					class="space-y-4"
-					on:submit|preventDefault={generateGraph}
-				>
-					<div>
-						<label for="graph-user-id" class="text-sm text-text-secondary block mb-2">
-							User ID
-						</label>
-						<input
-							id="graph-user-id"
-							type="text"
-							bind:value={userInput}
-							placeholder="Ex: 1"
-							class="w-full bg-bg-primary border border-white/10 rounded-lg px-4 py-2.5 focus:outline-none focus:border-accent-primary"
-						/>
+				<div class="space-y-4">
+					<div class="bg-bg-primary/70 border border-white/10 rounded-lg p-3">
+						<p class="text-xs uppercase tracking-wide text-text-tertiary">Context</p>
+						<p class="text-sm text-text-secondary mt-1">User: {userInput || "-"}</p>
+						<p class="text-sm text-text-secondary">Movie: {focusMovieId ?? "-"}</p>
+						{#if sourceAlgorithm}
+							<p class="text-sm text-text-secondary">Algorithm: {sourceAlgorithm}</p>
+						{/if}
 					</div>
 
-					<div>
-						<label for="graph-depth" class="text-sm text-text-secondary block mb-2">
-							Depth: {depth}
-						</label>
-						<input
-							id="graph-depth"
-							type="range"
-							min="1"
-							max="3"
-							step="1"
-							bind:value={depth}
-							disabled={graphMode === "explain"}
-							class="w-full accent-accent-primary"
-						/>
-						<p class="text-xs text-text-tertiary mt-2">
-							{#if graphMode === "explain"}
-								Explanation mode uses a focused graph around the selected recommendation.
-							{:else}
-								Higher depth expands the graph but may become denser.
-							{/if}
+					{#if messageText}
+						<p class={`text-sm ${messageType === "error" ? "text-red-400" : "text-sky-400"}`}>
+							{messageText}
 						</p>
-					</div>
-
-					<div class="border-t border-white/10 pt-4">
-						<p class="text-sm text-text-secondary mb-2">Node visibility</p>
-						<div class="space-y-2 text-sm">
-							<label class="flex items-center gap-2 cursor-pointer select-none">
-								<input type="checkbox" bind:checked={showMovies} class="accent-accent-primary" />
-								<span>Movies</span>
-							</label>
-							<label class="flex items-center gap-2 cursor-pointer select-none">
-								<input type="checkbox" bind:checked={showGenres} class="accent-accent-primary" />
-								<span>Genres</span>
-							</label>
-							<label class="flex items-center gap-2 cursor-pointer select-none">
-								<input type="checkbox" bind:checked={showActors} class="accent-accent-primary" />
-								<span>Actors</span>
-							</label>
-						</div>
-					</div>
+					{/if}
 
 					<div class="border-t border-white/10 pt-4 space-y-3">
 						<p class="text-sm text-text-secondary">Layout controls</p>
@@ -1210,21 +1120,7 @@
 						</div>
 						<p class="text-xs text-text-tertiary">Tip: drag on the graph to pan naturally.</p>
 					</div>
-
-					<button
-						type="submit"
-						class="w-full bg-gradient-to-r from-accent-primary to-accent-secondary text-white font-semibold rounded-lg py-2.5 hover:opacity-90 transition-opacity disabled:opacity-60"
-						disabled={loading}
-					>
-						{#if loading}Generating...{:else}Generate{/if}
-					</button>
-
-				{#if messageText}
-					<p class={`text-sm ${messageType === "error" ? "text-red-400" : "text-sky-400"}`}>
-						{messageText}
-					</p>
-				{/if}
-		</form>
+				</div>
 
 		<div class="border-t border-white/10 mt-4 pt-4">
 					<p class="text-sm text-text-secondary mb-3">Legend</p>
@@ -1372,7 +1268,7 @@
 
 				{#if !loading && !messageText && !graphRendered}
 					<div class="absolute inset-0 z-10 flex items-center justify-center text-sm text-text-secondary">
-						Graph not rendered yet. Click Generate to draw the network.
+						Graph not rendered yet. Select a recommendation to load its explanation.
 					</div>
 				{/if}
 			</section>
